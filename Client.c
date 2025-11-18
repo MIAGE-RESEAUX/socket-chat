@@ -1,6 +1,6 @@
 /*-----------------------------------------------------------
 Client a lancer apres le serveur avec la commande :
-client <adresse-serveur> <message-a-transmettre>
+client <adresse-serveur>
 ------------------------------------------------------------*/
 #include <stdlib.h>
 #include <stdio.h>
@@ -13,26 +13,66 @@ typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
 typedef struct hostent hostent;
 typedef struct servent servent;
+
+/* Envoie un message et reçoit la réponse - retourne 0 si ok, -1 si erreur */
+int send_message(int socket, const char *message, int len) {
+    char buffer[256];
+    int bytes_read;
+
+    /* envoi du message */
+    if (write(socket, message, len) < 0) {
+        perror("erreur : impossible d'envoyer le message");
+        return -1;
+    }
+
+    /* lecture de la réponse */
+    if ((bytes_read = read(socket, buffer, sizeof(buffer))) > 0) {
+        printf("serveur: ");
+        fflush(stdout);
+        write(1, buffer, bytes_read);
+    }
+
+    return 0;
+}
+
+/* Boucle principale de communication */
+int chat_loop(int socket) {
+    char buffer[256];
+
+    printf("Connecté. Tapez vos messages (/quit pour quitter)\n");
+
+    while (fgets(buffer, sizeof(buffer), stdin) != NULL) {
+        int len = strlen(buffer);
+
+        /* vérification de la commande /quit */
+        if (strncmp(buffer, "/quit", 5) == 0) {
+            write(socket, "/quit", 5);
+            return 0;
+        }
+
+        if (send_message(socket, buffer, len) < 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    int socket_descriptor, /* descripteur de socket */
-    longueur; /* longueur d'un buffer utilisé */
+    int socket_descriptor; /* descripteur de socket */
     sockaddr_in adresse_locale; /* adresse de socket local */
     hostent * ptr_host; /* info sur une machine hote */
     servent * ptr_service; /* info sur service */
-    char buffer[256];
     char * prog; /* nom du programme */
     char * host; /* nom de la machine distante */
-    char * mesg; /* message envoyé */
-    if (argc != 3) {
-        perror("usage : client <adresse-serveur> <message-a-transmettre>");
+    if (argc != 2) {
+        perror("usage : client <adresse-serveur>");
         exit(1);
     }
     prog = argv[0];
     host = argv[1];
-    mesg = argv[2];
     printf("nom de l'executable : %s \n", prog);
     printf("adresse du serveur : %s \n", host);
-    printf("message envoye : %s \n", mesg);
     if ((ptr_host = gethostbyname(host)) == NULL) {perror("erreur : impossible de trouver le serveur a partir de son adresse.");
         exit(1);
     }
@@ -71,23 +111,11 @@ adresse_locale */
         perror("erreur : impossible de se connecter au serveur.");
         exit(1);
     }
-    printf("connexion etablie avec le serveur. \n");
-    printf("envoi d'un message au serveur. \n");
-/* envoi du message vers le serveur */
-    if ((write(socket_descriptor, mesg, strlen(mesg))) < 0) {
-        perror("erreur : impossible d'ecrire le message destine au serveur.");
-        exit(1);
-    }
-/* mise en attente du prgramme pour simuler un delai de transmission */
-    sleep(3);
-    printf("message envoye au serveur. \n");
-/* lecture de la reponse en provenance du serveur */
-    while((longueur = read(socket_descriptor, buffer, sizeof(buffer))) > 0)
-    {
-        printf("reponse du serveur : \n");
-        write(1,buffer,longueur);
-    }
-    printf("\nfin de la reception.\n");
+    printf("connexion etablie avec le serveur.\n");
+
+    /* boucle de communication */
+    chat_loop(socket_descriptor);
+
     close(socket_descriptor);
     printf("connexion avec le serveur fermee, fin du programme.\n");
     exit(0);

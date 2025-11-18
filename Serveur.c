@@ -4,7 +4,8 @@ serveur
 ------------------------------------------------------------*/
 #include <stdlib.h>
 #include <stdio.h>
-#include <linux/types.h>
+#include <sys/types.h>
+#include <stdint.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
@@ -15,6 +16,41 @@ typedef struct sockaddr_in sockaddr_in;
 typedef struct hostent hostent;
 typedef struct servent servent;
 
+/* Gestion d'un client connecté - retourne 0 si /quit, -1 si erreur */
+int handle_client(int client_socket) {
+    char buffer[256];
+    int bytes_read;
+
+    printf("client connecté.\n");
+
+    /* boucle de communication avec le client */
+    while ((bytes_read = read(client_socket, buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[bytes_read] = '\0';
+
+        /* vérification de la commande /quit */
+        if (strncmp(buffer, "/quit", 5) == 0) {
+            printf("client déconnecté.\n");
+            return 0;
+        }
+
+        printf("message reçu : %s", buffer);
+
+        /* renvoi du message au client (echo) */
+        if (write(client_socket, buffer, bytes_read) < 0) {
+            perror("erreur : impossible d'écrire au client");
+            return -1;
+        }
+    }
+
+    if (bytes_read < 0) {
+        perror("erreur : lecture du client");
+        return -1;
+    }
+
+    printf("client déconnecté.\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int socket_descriptor;              /* descripteur de socket */
     int nouv_socket_descriptor;         /* [nouveau] descripteur de socket */
@@ -22,8 +58,6 @@ int main(int argc, char **argv) {
     sockaddr_in adresse_locale;         /* adresse de socket local */
     hostent *ptr_hote;                  /* les infos recuperees sur la machine */
     servent *ptr_service;               /* les infos recuperees sur le service de la machine */
-    char buffer[256];
-    char *mesg = "Communication réussie";
     char *prog;                         /* nom du programme */
 
     if (argc != 1) {
@@ -90,21 +124,8 @@ int main(int argc, char **argv) {
             exit(1);
         }
 
-        /* traitement du message */
-        printf("message du client : \n");
-
-        int bytes_read;
-        while((bytes_read = read(nouv_socket_descriptor, buffer, sizeof(buffer))) > 0) {
-            write(1, buffer, bytes_read);
-        }
-
-        printf("\nenvoi d'un message au client \n");
-
-        /* envoi du message vers le client */
-        if ((write(nouv_socket_descriptor, mesg, strlen(mesg))) < 0) {
-            perror("erreur : impossible d'ecrire le message destine au client.");
-            exit(1);
-        }
+        /* gestion du client */
+        handle_client(nouv_socket_descriptor);
 
         close(nouv_socket_descriptor);
     }
