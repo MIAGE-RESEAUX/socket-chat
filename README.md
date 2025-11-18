@@ -1,5 +1,3 @@
-
-
 #### V1 Multi Client/Serveur
 
 - Faire un serveur qui écoute sur un socket et renvoie un message à tout les clients connectés
