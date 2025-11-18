@@ -1,28 +1,20 @@
-# socket-chat
+#### V1 Multi Client/Serveur
 
-Projet Ingénierie des Réseaux  
-M1 MIAGE 2025 - 2026
+- Faire un serveur qui écoute sur un socket et renvoie un message à tout les clients connectés
+- Faire un client qui envoie un message sur un socket et écoute une réponse, le client passe un username qu'il choisi lors de la connexion
+- Rajouter un peu d'ui côté utilisateur
+#### V2 Multi client/Serveur
+- Connexion / Inscription (si utilisateur inexistant inscription automatique en fonction du username), mise en place de la BD.
+- Rajouter des chats privés via un code unique généré par le serveur. (ex `#4353`)
+- Mettre à jour l'UI en fonction des nouvelles implémentations
 
-## Compilation
+#### V3 Informations serveur
+- Rajouter un attribut privé / public sur les canaux Lister les canaux disponibles en public 
+- Lister les utilisateurs disponibles
+#### V3 Historique
 
-```bash
-gcc Client.c -o client
-gcc Serveur.c -o serveur
-```
-
-## Utilisation
-
-Démarrer le serveur :
-```bash
-./serveur
-```
-
-Démarrer le client :
-```bash
-./client
-```
-
-Envoyer un message du client au Serveur:
-```bash
-usage : client <adresse-serveur> <message-a-transmettre>: Success
-```
+- Rajouter un historique de chat sauvé en Base avec un TTL de 3jour. (json par conv)
+- Consultation de l'historique via des commandes.
+#### V4 Partage de fichiers
+- partager un fichier pdf, txt ou png pour un client donnée
+- mettre à jour l'ui en conséquence.
