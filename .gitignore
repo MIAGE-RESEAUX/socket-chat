@@ -1,0 +1,4 @@
+.vscode/
+*.o
+database/database.o
+database/database.db

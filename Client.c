@@ -1,94 +1,98 @@
 /*-----------------------------------------------------------
-Client a lancer apres le serveur avec la commande :
-client <adresse-serveur> <message-a-transmettre>
+Client simple pour le serveur Auth+Chat en C (SQLite)
 ------------------------------------------------------------*/
-#include <stdlib.h>
 #include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-typedef struct sockaddr sockaddr;
-typedef struct sockaddr_in sockaddr_in;
-typedef struct hostent hostent;
-typedef struct servent servent;
-int main(int argc, char **argv) {
-    int socket_descriptor, /* descripteur de socket */
-    longueur; /* longueur d'un buffer utilisé */
-    sockaddr_in adresse_locale; /* adresse de socket local */
-    hostent * ptr_host; /* info sur une machine hote */
-    servent * ptr_service; /* info sur service */
-    char buffer[256];
-    char * prog; /* nom du programme */
-    char * host; /* nom de la machine distante */
-    char * mesg; /* message envoyé */
-    if (argc != 3) {
-        perror("usage : client <adresse-serveur> <message-a-transmettre>");
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define BUFFER_SIZE 1024
+
+int main() {
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    char buffer[BUFFER_SIZE] = {0};
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Erreur socket");
         exit(1);
     }
-    prog = argv[0];
-    host = argv[1];
-    mesg = argv[2];
-    printf("nom de l'executable : %s \n", prog);
-    printf("adresse du serveur : %s \n", host);
-    printf("message envoye : %s \n", mesg);
-    if ((ptr_host = gethostbyname(host)) == NULL) {perror("erreur : impossible de trouver le serveur a partir de son adresse.");
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+        perror("Adresse invalide");
         exit(1);
     }
-/* copie caractere par caractere des infos de ptr_host vers adresse_locale */
-    bcopy((char*)ptr_host->h_addr, (char*)&adresse_locale.sin_addr,
-          ptr_host->h_length);
-    adresse_locale.sin_family = AF_INET; /* ou ptr_host->h_addrtype; */
-/* 2 facons de definir le service que l'on va utiliser a distance */
-/* (commenter l'une ou l'autre des solutions) */
-/*-----------------------------------------------------------*/
-/* SOLUTION 1 : utiliser un service existant, par ex. "irc" */
-/*
-if ((ptr_service = getservbyname("irc","tcp")) == NULL) {
-perror("erreur : impossible de recuperer le numero de port du service
-desire.");
-exit(1);
-}
-adresse_locale.sin_port = htons(ptr_service->s_port);
-*/
-/*-----------------------------------------------------------*/
-/*-----------------------------------------------------------*/
-/* SOLUTION 2 : utiliser un nouveau numero de port */
-    adresse_locale.sin_port = htons(5000);
-/*-----------------------------------------------------------*/
-    printf("numero de port pour la connexion au serveur : %d \n",
-           ntohs(adresse_locale.sin_port));
-/* creation de la socket */
-    if ((socket_descriptor = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("erreur : impossible de creer la socket de connexion avec le serveur.");
+
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("Connexion échouée");
         exit(1);
     }
-/* tentative de connexion au serveur dont les infos sont dans
-adresse_locale */
-    if ((connect(socket_descriptor, (sockaddr*)(&adresse_locale),
-                 sizeof(adresse_locale))) < 0) {
-        perror("erreur : impossible de se connecter au serveur.");
-        exit(1);
+
+    printf("--- Client connecté au serveur Auth/Chat ---\n");
+    printf("Commandes: LOGIN user pass  |  SIGNUP user pass\n");
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        printf("> ");
+        fflush(stdout);
+
+        if (!fgets(buffer, BUFFER_SIZE, stdin)) {
+            printf("Fin entrée\n");
+            break;
+        }
+
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        if (send(sock, buffer, strlen(buffer), 0) < 0) {
+            perror("Erreur send");
+            break;
+        }
+
+        memset(buffer, 0, BUFFER_SIZE);
+
+        int valread = read(sock, buffer, BUFFER_SIZE - 1);
+        if (valread <= 0) {
+            printf("Connexion fermée par le serveur.\n");
+            break;
+        }
+
+        buffer[valread] = '\0';
+        printf("[SERVEUR] %s\n", buffer);
+
+        if (strncmp(buffer, "SUCCES_SESSION", 15) == 0) break;
     }
-    printf("connexion etablie avec le serveur. \n");
-    printf("envoi d'un message au serveur. \n");
-/* envoi du message vers le serveur */
-    if ((write(socket_descriptor, mesg, strlen(mesg))) < 0) {
-        perror("erreur : impossible d'ecrire le message destine au serveur.");
-        exit(1);
+
+    printf("--- Session de chat ---\n");
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        printf("message> "); fflush(stdout);
+
+        if (!fgets(buffer, BUFFER_SIZE, stdin)) break;
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        if (strcmp(buffer, "/quit") == 0) {
+            printf("Déconnexion...\n");
+            break;
+        }
+
+        send(sock, buffer, strlen(buffer), 0);
+
+        memset(buffer, 0, BUFFER_SIZE);
+        int valread = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+        if (valread <= 0) break;
+
+        buffer[valread] = '\0';
+        printf("[SERVEUR] %s\n", buffer);
     }
-/* mise en attente du prgramme pour simuler un delai de transmission */
-    sleep(3);
-    printf("message envoye au serveur. \n");
-/* lecture de la reponse en provenance du serveur */
-    while((longueur = read(socket_descriptor, buffer, sizeof(buffer))) > 0)
-    {
-        printf("reponse du serveur : \n");
-        write(1,buffer,longueur);
-    }
-    printf("\nfin de la reception.\n");
-    close(socket_descriptor);
-    printf("connexion avec le serveur fermee, fin du programme.\n");
-    exit(0);
+
+    close(sock);
+    return 0;
 }
