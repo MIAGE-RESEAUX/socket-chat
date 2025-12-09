@@ -58,39 +58,53 @@ void handle_auth_request(int client_socket) {
     char buffer[BUFFER_SIZE] = {0};
     ssize_t valread;
     auth_request_t request;
+    bool authenticated = false;
 
-    valread = read(client_socket, buffer, BUFFER_SIZE - 1);
-    if (valread <= 0) { close(client_socket); return; }
-    buffer[valread] = '\0';
+    while (!authenticated) {
+        memset(buffer, 0, BUFFER_SIZE);
+        valread = read(client_socket, buffer, BUFFER_SIZE - 1);
 
-    printf("[AUTH] Requête: %s\n", buffer);
+        if (valread <= 0) {
+            close(client_socket);
+            return;
+        }
 
-    if (parse_request(buffer, &request) != 0) {
-        send_response(client_socket, "ERREUR: Format invalide.\n");
-        close(client_socket);
-        return;
+        buffer[valread] = '\0';
+        printf("[AUTH] Requête: %s\n", buffer);
+
+        if (parse_request(buffer, &request) != 0) {
+            send_response(client_socket, "ERREUR: Format (LOGIN/SIGNUP user pass).\n");
+            continue;
+        }
+
+        bool success = false;
+
+        if (strcmp(request.command, "LOGIN") == 0) {
+            success = auth_login(request.username, request.password);
+            // 💡 MODIFICATION : On envoie un message SEULEMENT si ça échoue
+            if (!success) {
+                send_response(client_socket, "ECHEC_AUTH: Login invalide.\n");
+            }
+        }
+        else if (strcmp(request.command, "SIGNUP") == 0) {
+            success = auth_signup(request.username, request.password);
+            // 💡 MODIFICATION : Idem, silence si succès, message si erreur
+            if (!success) {
+                 send_response(client_socket, "ECHEC_AUTH: Erreur inscription.\n");
+            }
+        }
+        else {
+            send_response(client_socket, "ERREUR: Commande inconnue.\n");
+        }
+
+        if (success) {
+            authenticated = true;
+            // C'est cette fonction qui va envoyer "SUCCES_SESSION..."
+            // Le client recevra donc directement le bon signal.
+            handle_user_session(client_socket, request.username);
+        }
     }
-
-    bool success = false;
-
-    if (strcmp(request.command, "LOGIN") == 0) {
-        success = auth_login(request.username, request.password);
-        send_response(client_socket, success ? "SUCCES_AUTH: Connexion.\n" : "ECHEC_AUTH: Login invalide.\n");
-    }
-    else if (strcmp(request.command, "SIGNUP") == 0) {
-        success = auth_signup(request.username, request.password);
-        send_response(client_socket, success ? "SUCCES_AUTH: Inscription.\n" : "ECHEC_AUTH: Déjà existant ou erreur.\n");
-    }
-    else {
-        send_response(client_socket, "ERREUR: Commande inconnue.\n");
-    }
-
-    // 🔥 IMPORTANT : envoyer immédiatement SUCCES_SESSION
-    if (success) {
-        send_response(client_socket, "SUCCES_SESSION: Connecté.\n");
-        handle_user_session(client_socket, request.username);
-    }
-
+    
     close(client_socket);
 }
 
