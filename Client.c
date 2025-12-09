@@ -1,133 +1,176 @@
-// Client a lancer apres le serveur avec la commande :
-// client <adresse-serveur>
-
-#include <stdlib.h>
 #include <stdio.h>
-#include <sys/types.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <netdb.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/select.h>
 
-#define PORT 5000
-#define BUFFER_SIZE 256
+#define PORT 8080        // Port par défaut (celui du code Auth)
+#define BUFFER_SIZE 1024
 
-typedef struct sockaddr sockaddr;
-typedef struct sockaddr_in sockaddr_in;
-typedef struct hostent hostent;
-typedef fd_set ListeSockets;  // ensemble de sockets a surveiller
+// --- Fonctions Utilitaires ---
 
-// Affiche une erreur et quitte
 void erreur(const char *msg) {
     perror(msg);
     exit(1);
 }
 
-// Verifie si l'utilisateur veut quitter
-int isQuit(const char *buffer) {
-    return strncmp(buffer, "/quit", 5) == 0;
-}
-
-// Envoie un message formate avec le username
-int envoyerMessage(int sock, const char *username, const char *buffer) {
-    char message[512];
-    snprintf(message, sizeof(message), "[%s] %s", username, buffer);
-    return write(sock, message, strlen(message));
-}
-
-// Connexion au serveur
-int connecter(const char *host) {
+// Fonction de connexion (supporte IP ou nom de domaine/localhost)
+int connecter_au_serveur(const char *hostname) {
     int sock;
-    sockaddr_in adresse;
-    hostent *serveur;
+    struct sockaddr_in serv_addr;
+    struct hostent *server;
 
-    serveur = gethostbyname(host);
-    if (serveur == NULL)
-        erreur("Serveur introuvable");
+    // Création socket
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        erreur("Erreur création socket");
+    }
 
-    memset(&adresse, 0, sizeof(adresse));
-    adresse.sin_family = AF_INET;
-    adresse.sin_port = htons(PORT);
-    memcpy(&adresse.sin_addr, serveur->h_addr, serveur->h_length);
+    // Résolution du nom d'hôte (ex: "localhost" ou "127.0.0.1")
+    server = gethostbyname(hostname);
+    if (server == NULL) {
+        fprintf(stderr, "Erreur: Hôte introuvable\n");
+        exit(0);
+    }
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0)
-        erreur("Erreur socket");
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    serv_addr.sin_port = htons(PORT);
 
-    if (connect(sock, (sockaddr *)&adresse, sizeof(adresse)) < 0)
-        erreur("Connexion impossible");
+    // Tentative de connexion
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        erreur("Connexion échouée");
+    }
 
     return sock;
 }
 
-// Boucle principale du chat
-void boucleChat(int sock, const char *username) {
+// --- Phase 1 : Authentification ---
+void phase_authentification(int sock) {
     char buffer[BUFFER_SIZE];
-    ListeSockets socketsActifs;
-    int n;
+    
+    printf("--- Client connecté au serveur Auth/Chat ---\n");
+    printf("Commandes: LOGIN user pass  |  SIGNUP user pass\n");
 
-    printf("Connecte! (/quit pour quitter)\n");
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        printf("> ");
+        fflush(stdout);
 
-    for (;;) {
-        // Surveiller le clavier (0 = stdin) et le serveur
-        FD_ZERO(&socketsActifs);
-        FD_SET(0, &socketsActifs);      // clavier
-        FD_SET(sock, &socketsActifs);   // serveur
+        // Lecture clavier
+        if (!fgets(buffer, BUFFER_SIZE, stdin)) {
+            break;
+        }
+        buffer[strcspn(buffer, "\n")] = '\0'; // Retirer le \n
 
-        // Attendre une activite
-        if (select(FD_SETSIZE, &socketsActifs, NULL, NULL, NULL) < 0) {
-            perror("Erreur select");
-            return;
+        // Envoi au serveur
+        if (send(sock, buffer, strlen(buffer), 0) < 0) {
+            erreur("Erreur d'envoi");
         }
 
-        // Message du serveur ?
-        if (FD_ISSET(sock, &socketsActifs)) {
-            n = read(sock, buffer, BUFFER_SIZE - 1);
+        // Attente réponse (Blocant ici car on ne peut pas chatter sans auth)
+        memset(buffer, 0, BUFFER_SIZE);
+        int valread = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+        
+        if (valread <= 0) {
+            printf("Connexion fermée par le serveur.\n");
+            exit(1);
+        }
+
+        buffer[valread] = '\0';
+        printf("[SERVEUR] %s\n", buffer);
+
+        // Vérification du succès (protocole défini dans ton code 1)
+        if (strncmp(buffer, "SUCCES_SESSION", 14) == 0) {
+            printf("\n💡 Authentification réussie ! Entrée dans le chat...\n");
+            printf("---------------------------------------------------\n");
+            return; // On sort de la fonction pour aller au chat
+        }
+    }
+}
+
+// --- Phase 2 : Chat Asynchrone (Multiplexé) ---
+void phase_chat(int sock) {
+    char buffer[BUFFER_SIZE];
+    fd_set sockets_actifs; // Liste des descripteurs de fichiers à surveiller
+    
+    printf("Tapez votre message ou /quit pour quitter.\n");
+
+    while (1) {
+        // 1. Réinitialiser la liste des sources à écouter
+        FD_ZERO(&sockets_actifs);
+        FD_SET(STDIN_FILENO, &sockets_actifs); // Écouter le clavier (entrée standard)
+        FD_SET(sock, &sockets_actifs);         // Écouter le serveur (réseau)
+
+        // 2. Attendre qu'il se passe quelque chose (bloquant jusqu'à activité)
+        if (select(sock + 1, &sockets_actifs, NULL, NULL, NULL) < 0) {
+            perror("Erreur select");
+            break;
+        }
+
+        // 3. Cas A : Message reçu du SERVEUR
+        if (FD_ISSET(sock, &sockets_actifs)) {
+            memset(buffer, 0, BUFFER_SIZE);
+            int n = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+            
             if (n <= 0) {
-                printf("\nDeconnecte.\n");
-                return;
+                printf("\nDéconnecté par le serveur.\n");
+                break;
             }
             buffer[n] = '\0';
-            printf("%s", buffer);
+            // On affiche simplement le message (le serveur gère le format "[User] msg")
+            printf("%s\n", buffer); 
+            printf("message> "); // Réaffiche le prompt pour garder l'interface propre
             fflush(stdout);
         }
 
-        // Entree clavier ?
-        if (FD_ISSET(0, &socketsActifs)) {
-            if (fgets(buffer, BUFFER_SIZE, stdin) == NULL)
-                return;
+        // 4. Cas B : Saisie au CLAVIER
+        if (FD_ISSET(STDIN_FILENO, &sockets_actifs)) {
+            memset(buffer, 0, BUFFER_SIZE);
+            if (fgets(buffer, BUFFER_SIZE, stdin) == NULL) break;
+            
+            buffer[strcspn(buffer, "\n")] = '\0'; // Retirer le saut de ligne
 
-            if (isQuit(buffer)) {
-                write(sock, "/quit", 5);
-                return;
+            if (strcmp(buffer, "/quit") == 0) {
+                printf("Déconnexion volontaire...\n");
+                break;
             }
 
-            envoyerMessage(sock, username, buffer);
+            // Envoi du message brut (le serveur sait qui on est grâce à l'auth préalable)
+            send(sock, buffer, strlen(buffer), 0);
+            
+            // Petit effet visuel pour dire "j'ai envoyé"
+            printf("\033[1A"); // Remonte le curseur (optionnel, pour style)
+            printf("\033[K");  // Efface la ligne
+            printf("[Moi] %s\n", buffer);
+            printf("message> ");
+            fflush(stdout);
         }
     }
 }
 
 int main(int argc, char **argv) {
     int sock;
-    char username[32];
+    char *hostname = "127.0.0.1"; // Valeur par défaut
 
-    // au lancement on doit avoir 2 arg (le programe "./client" et l'addr "localhost"
-    if (argc != 2) {
-        printf("Usage: %s <serveur>\n", argv[0]);
-        exit(1);
+    // On accepte un argument pour l'adresse IP (ex: ./client 192.168.1.50)
+    if (argc == 2) {
+        hostname = argv[1];
     }
 
-    printf("Connexion a %s...\n", argv[1]);
-    sock = connecter(argv[1]);
-    printf("Connecte!\n");
+    // 1. Connexion
+    sock = connecter_au_serveur(hostname);
 
-    printf("Votre nom: ");
-    fflush(stdout);
-    fgets(username, sizeof(username), stdin);
-    username[strcspn(username, "\n")] = '\0';
+    // 2. Authentification (Blocante)
+    phase_authentification(sock);
 
-    boucleChat(sock, username);
+    // 3. Chat (Asynchrone avec select)
+    phase_chat(sock);
 
     close(sock);
     return 0;

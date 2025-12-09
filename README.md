@@ -18,3 +18,10 @@
 #### V4 Partage de fichiers
 - partager un fichier pdf, txt ou png pour un client donnée
 - mettre à jour l'ui en conséquence.
+
+
+
+#### V2 : 
+1. Installer le driver mongodb : 
+- MACOS : `brew install mongo-c-driver`
+- Linux : `sudo apt install libmongoc-dev``
