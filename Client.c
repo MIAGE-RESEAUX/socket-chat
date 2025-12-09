@@ -20,7 +20,7 @@ void erreur(const char *msg) {
 }
 
 // Fonction de connexion (supporte IP ou nom de domaine/localhost)
-int connecter_au_serveur(const char *hostname) {
+int connecter_au_serveur(const char *hostname, int port) {
     int sock;
     struct sockaddr_in serv_addr;
     struct hostent *server;
@@ -40,7 +40,7 @@ int connecter_au_serveur(const char *hostname) {
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
-    serv_addr.sin_port = htons(PORT);
+    serv_addr.sin_port = htons(port);
 
     // Tentative de connexion
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
@@ -156,20 +156,23 @@ void phase_chat(int sock) {
 
 int main(int argc, char **argv) {
     int sock;
-    char *hostname = "127.0.0.1"; // Valeur par défaut
+    char *hostname = "127.0.0.1"; // Hôte par défaut
+    int port = PORT;              // Port par défaut (8080)
 
-    // On accepte un argument pour l'adresse IP (ex: ./client 192.168.1.50)
-    if (argc == 2) {
+    // Gestion des arguments : ./client [host] [port]
+    if (argc >= 2) {
         hostname = argv[1];
     }
+    if (argc >= 3) {
+        port = atoi(argv[2]);
+    }
 
-    // 1. Connexion
-    sock = connecter_au_serveur(hostname);
-
-    // 2. Authentification (Blocante)
+    printf("Tentative de connexion à %s sur le port %d...\n", hostname, port);
+    // 1. Connexion (avec les nouveaux paramètres)
+    sock = connecter_au_serveur(hostname, port);
+    // 2. Authentification
     phase_authentification(sock);
-
-    // 3. Chat (Asynchrone avec select)
+    // 3. Chat
     phase_chat(sock);
 
     close(sock);

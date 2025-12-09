@@ -152,10 +152,16 @@ void traiter_donnees_client(int index) {
     }
 }
 
-int main() {
+int main(int argc, char **argv) {
     int server_fd, new_socket, max_sd;
     struct sockaddr_in address;
     fd_set readfds; // Ensemble des descripteurs de fichiers à lire
+
+    // Gestion du port via argument ou défaut
+    int port = PORT;
+    if (argc > 1) {
+        port = atoi(argv[1]);
+    }
 
     // 1. Initialisation BDD
     printf("Ouverture de la DB: %s\n", DATABASE_PATH);
@@ -178,7 +184,7 @@ int main() {
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    address.sin_port = htons(port);
 
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("Bind failed");
@@ -190,7 +196,7 @@ int main() {
         exit(1);
     }
 
-    printf("--- Serveur Multi-Client Auth+Chat démarré sur le port %d ---\n", PORT);
+    printf("--- Serveur Multi-Client Auth+Chat démarré sur le port %d ---\n", port);
 
     // 3. Boucle Principale
     while (1) {
