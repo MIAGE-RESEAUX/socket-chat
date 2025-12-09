@@ -85,12 +85,15 @@ void handle_auth_request(int client_socket) {
         send_response(client_socket, "ERREUR: Commande inconnue.\n");
     }
 
+    // 🔥 IMPORTANT : envoyer immédiatement SUCCES_SESSION
     if (success) {
+        send_response(client_socket, "SUCCES_SESSION: Connecté.\n");
         handle_user_session(client_socket, request.username);
     }
 
     close(client_socket);
 }
+
 
 int main() {
     int server_fd, new_socket;

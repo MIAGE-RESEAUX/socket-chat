@@ -1,5 +1,5 @@
 /*-----------------------------------------------------------
-Client simple pour le serveur Auth+Chat en C (SQLite)
+Client simple pour serveur Auth+Chat (C + SQLite)
 ------------------------------------------------------------*/
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +17,7 @@ int main() {
     struct sockaddr_in serv_addr;
     char buffer[BUFFER_SIZE] = {0};
 
+    // Création socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Erreur socket");
         exit(1);
@@ -30,6 +31,7 @@ int main() {
         exit(1);
     }
 
+    // Connexion
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("Connexion échouée");
         exit(1);
@@ -38,6 +40,9 @@ int main() {
     printf("--- Client connecté au serveur Auth/Chat ---\n");
     printf("Commandes: LOGIN user pass  |  SIGNUP user pass\n");
 
+    // -------------------------
+    // 🔐 BOUCLE AUTHENTIFICATION
+    // -------------------------
     while (1) {
         memset(buffer, 0, BUFFER_SIZE);
         printf("> ");
@@ -66,16 +71,28 @@ int main() {
         buffer[valread] = '\0';
         printf("[SERVEUR] %s\n", buffer);
 
-        if (strncmp(buffer, "SUCCES_SESSION", 15) == 0) break;
+        // 🔥 Si login/signup OK → passage mode chat
+        if (strncmp(buffer, "SUCCES_SESSION", 14) == 0) {
+            printf("💡 Authentification réussie, passage au chat.\n");
+            break;
+        }
     }
 
-    printf("--- Session de chat ---\n");
+    // -------------------------
+    // 💬 BOUCLE CHAT
+    // -------------------------
+    printf("\n--- Session de chat ---\n");
+    printf("Tapez /quit pour quitter.\n");
 
     while (1) {
         memset(buffer, 0, BUFFER_SIZE);
-        printf("message> "); fflush(stdout);
 
-        if (!fgets(buffer, BUFFER_SIZE, stdin)) break;
+        printf("message> ");
+        fflush(stdout);
+
+        if (!fgets(buffer, BUFFER_SIZE, stdin))
+            break;
+
         buffer[strcspn(buffer, "\n")] = '\0';
 
         if (strcmp(buffer, "/quit") == 0) {
@@ -87,7 +104,11 @@ int main() {
 
         memset(buffer, 0, BUFFER_SIZE);
         int valread = recv(sock, buffer, BUFFER_SIZE - 1, 0);
-        if (valread <= 0) break;
+
+        if (valread <= 0) {
+            printf("Serveur déconnecté.\n");
+            break;
+        }
 
         buffer[valread] = '\0';
         printf("[SERVEUR] %s\n", buffer);
