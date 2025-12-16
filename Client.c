@@ -8,173 +8,168 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/select.h>
+#include "client_ui.h"
 
-#define PORT 8080        // Port par défaut (celui du code Auth)
+#define PORT 8080
 #define BUFFER_SIZE 1024
 
-// --- Fonctions Utilitaires ---
-
 void erreur(const char *msg) {
+    ui_set_raw_mode(0); 
     perror(msg);
     exit(1);
 }
 
-// Fonction de connexion (supporte IP ou nom de domaine/localhost)
 int connecter_au_serveur(const char *hostname, int port) {
     int sock;
     struct sockaddr_in serv_addr;
     struct hostent *server;
 
-    // Création socket
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        erreur("Erreur création socket");
-    }
-
-    // Résolution du nom d'hôte (ex: "localhost" ou "127.0.0.1")
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) erreur("Erreur socket");
     server = gethostbyname(hostname);
-    if (server == NULL) {
-        fprintf(stderr, "Erreur: Hôte introuvable\n");
-        exit(0);
-    }
+    if (server == NULL) { fprintf(stderr, "Hôte introuvable\n"); exit(0); }
 
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(port);
 
-    // Tentative de connexion
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        erreur("Connexion échouée");
-    }
-
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) erreur("Connexion échouée");
     return sock;
 }
 
-// --- Phase 1 : Authentification ---
 void phase_authentification(int sock) {
     char buffer[BUFFER_SIZE];
-    
-    printf("--- Client connecté au serveur Auth/Chat ---\n");
-    printf("Commandes: LOGIN user pass  |  SIGNUP user pass\n");
+    ui_show_banner();
+    printf(C_YELLOW "  Commandes: LOGIN/SIGNUP user pass\n" C_RESET "\n");
 
     while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-        printf("> ");
-        fflush(stdout);
+        printf(C_GREEN " AUTH " C_RESET "> "); fflush(stdout);
+        if (!fgets(buffer, BUFFER_SIZE, stdin)) exit(0);
+        buffer[strcspn(buffer, "\n")] = '\0';
+        if (strlen(buffer) == 0) continue;
 
-        // Lecture clavier
-        if (!fgets(buffer, BUFFER_SIZE, stdin)) {
-            break;
-        }
-        buffer[strcspn(buffer, "\n")] = '\0'; // Retirer le \n
-
-        // Envoi au serveur
-        if (send(sock, buffer, strlen(buffer), 0) < 0) {
-            erreur("Erreur d'envoi");
-        }
-
-        // Attente réponse (Blocant ici car on ne peut pas chatter sans auth)
-        memset(buffer, 0, BUFFER_SIZE);
+        send(sock, buffer, strlen(buffer), 0);
         int valread = recv(sock, buffer, BUFFER_SIZE - 1, 0);
-        
-        if (valread <= 0) {
-            printf("Connexion fermée par le serveur.\n");
-            exit(1);
-        }
-
+        if (valread <= 0) exit(1);
         buffer[valread] = '\0';
-        printf("[SERVEUR] %s\n", buffer);
 
-        // Vérification du succès (protocole défini dans ton code 1)
         if (strncmp(buffer, "SUCCES_SESSION", 14) == 0) {
-            printf("\n💡 Authentification réussie ! Entrée dans le chat...\n");
-            printf("---------------------------------------------------\n");
-            return; // On sort de la fonction pour aller au chat
+            printf(C_GREEN " ✔ Succès !" C_RESET "\n");
+            sleep(1);
+            return;
+        } else {
+            printf(C_RED " %s" C_RESET "\n", buffer);
         }
     }
 }
 
-// --- Phase 2 : Chat Asynchrone (Multiplexé) ---
 void phase_chat(int sock) {
     char buffer[BUFFER_SIZE];
-    fd_set sockets_actifs; // Liste des descripteurs de fichiers à surveiller
-    
-    printf("Tapez votre message ou /quit pour quitter.\n");
+    char temp_msg[BUFFER_SIZE];
+    fd_set sockets_actifs;
+    int max_sd = sock;
+
+    ui_show_banner();
+    printf(C_GREEN C_BOLD " --- CHAT ACTIF --- " C_RESET "\n");
+    printf(C_WHITE C_ITALIC " (/commandes pour l'aide, Flèches pour historique)" C_RESET "\n\n");
+    ui_refresh_prompt();
+    ui_set_raw_mode(1);
 
     while (1) {
-        // 1. Réinitialiser la liste des sources à écouter
         FD_ZERO(&sockets_actifs);
-        FD_SET(STDIN_FILENO, &sockets_actifs); // Écouter le clavier (entrée standard)
-        FD_SET(sock, &sockets_actifs);         // Écouter le serveur (réseau)
+        FD_SET(STDIN_FILENO, &sockets_actifs);
+        FD_SET(sock, &sockets_actifs);
 
-        // 2. Attendre qu'il se passe quelque chose (bloquant jusqu'à activité)
-        if (select(sock + 1, &sockets_actifs, NULL, NULL, NULL) < 0) {
-            perror("Erreur select");
-            break;
-        }
+        if (select(max_sd + 1, &sockets_actifs, NULL, NULL, NULL) < 0) continue;
 
-        // 3. Cas A : Message reçu du SERVEUR
         if (FD_ISSET(sock, &sockets_actifs)) {
             memset(buffer, 0, BUFFER_SIZE);
             int n = recv(sock, buffer, BUFFER_SIZE - 1, 0);
-            
             if (n <= 0) {
-                printf("\nDéconnecté par le serveur.\n");
+                ui_print_pretty_msg("!!! Serveur déconnecté.");
                 break;
             }
             buffer[n] = '\0';
-            // On affiche simplement le message (le serveur gère le format "[User] msg")
-            printf("%s\n", buffer); 
-            printf("message> "); // Réaffiche le prompt pour garder l'interface propre
-            fflush(stdout);
+            ui_print_pretty_msg(buffer);
         }
 
-        // 4. Cas B : Saisie au CLAVIER
         if (FD_ISSET(STDIN_FILENO, &sockets_actifs)) {
-            memset(buffer, 0, BUFFER_SIZE);
-            if (fgets(buffer, BUFFER_SIZE, stdin) == NULL) break;
-            
-            buffer[strcspn(buffer, "\n")] = '\0'; // Retirer le saut de ligne
+            char ch;
+            if (read(STDIN_FILENO, &ch, 1) > 0) {
+                
+                if (ch == '\033') {
+                    char seq[2];
+                    if (read(STDIN_FILENO, &seq[0], 1) == 0) continue;
+                    if (read(STDIN_FILENO, &seq[1], 1) == 0) continue;
 
-            if (strcmp(buffer, "/quit") == 0) {
-                printf("Déconnexion volontaire...\n");
-                break;
+                    if (seq[0] == '[') {
+                        if (seq[1] == 'A') {
+                            ui_history_up();
+                        } else if (seq[1] == 'B') {
+                            ui_history_down();
+                        }
+                    }
+                    continue;
+                }
+
+                if (ch == '\n' || ch == '\r') {
+                    if (input_len > 0) {
+                        ui_history_add(input_buffer);
+
+                        memset(temp_msg, 0, BUFFER_SIZE);
+                        strcpy(temp_msg, input_buffer);
+
+                        ui_reset_input();
+
+                        if (strcmp(temp_msg, "/commandes") == 0) {
+                            ui_print_help();
+                        } 
+                        else if (strcmp(temp_msg, "/quit") == 0) {
+                            break; 
+                        }
+                        else {
+                            char my_formatted_msg[BUFFER_SIZE + 10];
+                            snprintf(my_formatted_msg, sizeof(my_formatted_msg), "[Moi] %s", temp_msg);
+                            ui_print_pretty_msg(my_formatted_msg);
+                            
+                            send(sock, temp_msg, strlen(temp_msg), 0);
+                        }
+                    } else {
+                         printf("\r\n");
+                         ui_refresh_prompt();
+                    }
+                } 
+                else if (ch == 127 || ch == '\b') {
+                    ui_delete_char();
+                } 
+                else if (ch == 3) { 
+                    break;
+                }
+                else if (ch >= 32 && ch <= 126) {
+                    if (input_len < BUFFER_SIZE - 1) {
+                        input_buffer[input_len++] = ch;
+                        input_buffer[input_len] = '\0';
+                        ui_print_char(ch);
+                    }
+                }
             }
-
-            // Envoi du message brut (le serveur sait qui on est grâce à l'auth préalable)
-            send(sock, buffer, strlen(buffer), 0);
-            
-            // Petit effet visuel pour dire "j'ai envoyé"
-            printf("\033[1A"); // Remonte le curseur (optionnel, pour style)
-            printf("\033[K");  // Efface la ligne
-            printf("[Moi] %s\n", buffer);
-            printf("message> ");
-            fflush(stdout);
         }
     }
+    ui_set_raw_mode(0);
 }
 
 int main(int argc, char **argv) {
-    int sock;
-    char *hostname = "127.0.0.1"; // Hôte par défaut
-    int port = PORT;              // Port par défaut (8080)
+    char *hostname = "127.0.0.1";
+    int port = PORT;
 
-    // Gestion des arguments : ./client [host] [port]
-    if (argc >= 2) {
-        hostname = argv[1];
-    }
-    if (argc >= 3) {
-        port = atoi(argv[2]);
-    }
+    if (argc >= 2) hostname = argv[1];
+    if (argc >= 3) port = atoi(argv[2]);
 
-    printf("Tentative de connexion à %s sur le port %d...\n", hostname, port);
-    // 1. Connexion (avec les nouveaux paramètres)
-    sock = connecter_au_serveur(hostname, port);
-    // 2. Authentification
+    ui_clear_screen();
+    int sock = connecter_au_serveur(hostname, port);
     phase_authentification(sock);
-    // 3. Chat
     phase_chat(sock);
-
     close(sock);
+    printf("\nBye!\n");
     return 0;
 }

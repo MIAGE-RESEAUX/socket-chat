@@ -11,7 +11,7 @@ SRC_COMMON = database/database.c \
 
 # Server and client sources
 SERVER_SRC = server.c $(SRC_COMMON)
-CLIENT_SRC = client.c $(SRC_COMMON)
+CLIENT_SRC = client.c client_ui.c $(SRC_COMMON)
 
 # Object files
 OBJ_SERVER = $(SERVER_SRC:.c=.o)
