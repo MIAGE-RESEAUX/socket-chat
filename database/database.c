@@ -99,6 +99,15 @@ int db_create_channel(const char *name, const char *type, const char *password,
   return 0; // Failed to find unique ID or other error
 }
 
+int db_list_public_channels(int (*callback)(void *, int, char **, char **),
+                            void *data) {
+  char query[256];
+  snprintf(
+      query, sizeof(query),
+      "SELECT name, id FROM channel WHERE type='public' ORDER BY name ASC;");
+  return db_query(query, callback, data);
+}
+
 // Helper callback for getting integer ID
 static int db_get_int_cb(void *out_id, int argc, char **argv, char **colname) {
   if (argc > 0 && argv[0]) {

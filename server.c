@@ -125,10 +125,16 @@ void traiter_auth(int index, char *buffer) {
     if (!success)
       send_to_client(socket, "ECHEC_AUTH: Login ou mdp incorrect.\n");
   } else if (strcmp(command, "SIGNUP") == 0) {
-    success = auth_signup(user, pass);
-    if (!success)
+    if (auth_signup(user, pass)) {
+      send_to_client(
+          socket,
+          "SUCCES_INSCRIPTION: Vous pouvez maintenant vous connecter.\n");
+    } else {
       send_to_client(socket,
                      "ECHEC_AUTH: Utilisateur existe deja ou erreur db.\n");
+    }
+    // Do NOT set success = true here. We want explicit LOGIN after signup.
+    return;
   } else {
     send_to_client(socket, "ERREUR: Commande inconnue.\n");
     return;
@@ -148,6 +154,17 @@ void traiter_auth(int index, char *buffer) {
     // Send history callback
     db_get_history(1, 50, send_hist_cb, &index);
   }
+}
+
+// Callback for listing channels
+int send_channel_list_cb(void *ctx, int argc, char **argv, char **col) {
+  int socket = *(int *)ctx;
+  if (argc >= 2) {
+    char msg[256];
+    snprintf(msg, sizeof(msg), "- %s (ID: %s)\n", argv[0], argv[1]);
+    send(socket, msg, strlen(msg), 0);
+  }
+  return 0;
 }
 
 // Traitement principal d'un message reçu
@@ -194,29 +211,34 @@ void traiter_donnees_client(int index) {
           char *pass = (args >= 4) ? arg3 : NULL;
           int user_db_id = db_get_user_id(clients[index].username);
           if (db_create_channel(arg1, arg2, pass, user_db_id)) {
-            send_to_client(sock, "Canal créé avec succès.\n");
+            int new_id = db_get_channel_id(arg1);
+            char success_msg[128];
+            snprintf(success_msg, sizeof(success_msg),
+                     "Canal créé avec succès. ID: %d\n", new_id);
+            send_to_client(sock, success_msg);
           } else {
             send_to_client(sock, "Erreur création canal (nom déjà pris ?).\n");
           }
         }
       } else if (strcmp(cmd, "/join") == 0) {
         if (args < 2) {
-          send_to_client(sock, "Usage: /join [nom_canal] [mdp (si private)]\n");
+          send_to_client(sock, "Usage: /join [id_canal] [mdp (si private)]\n");
         } else {
-          int cid = db_get_channel_id(arg1);
-          if (cid == -1) {
-            send_to_client(sock, "Canal introuvable.\n");
+          int cid = atoi(arg1); // Interpret arg1 as ID
+          if (cid <= 0) {
+            send_to_client(sock, "ID de canal invalide.\n");
           } else {
             char *pass = (args >= 3) ? arg2 : NULL;
+            // Validate directly with ID
             if (db_validate_channel_password(cid, pass)) {
               clients[index].channel_id = cid;
               send_to_client(sock, "Vous avez rejoint le canal.\n");
-              // Send history
-              // Send history
+
               db_get_history(cid, 50, send_hist_cb, &index);
 
             } else {
-              send_to_client(sock, "Mot de passe incorrect ou canal privé.\n");
+              send_to_client(sock,
+                             "Mot de passe incorrect ou canal introuvable.\n");
             }
           }
         }
@@ -227,6 +249,24 @@ void traiter_donnees_client(int index) {
         send_to_client(
             sock,
             "Suppression non implémentée (requiert vérification admin).\n");
+      } else if (strcmp(cmd, "/list") == 0) {
+        send_to_client(sock, "--- Canaux Publics ---\n");
+        db_list_public_channels(send_channel_list_cb, &sock);
+        send_to_client(sock, "----------------------\n");
+      } else if (strcmp(cmd, "/users") == 0) {
+        char msg[BUFFER_SIZE];
+        int cid = clients[index].channel_id;
+        snprintf(msg, sizeof(msg), "--- Utilisateurs (Canal %d) ---\n", cid);
+        send_to_client(sock, msg);
+
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+          if (clients[i].socket != 0 && clients[i].authenticated &&
+              clients[i].channel_id == cid) {
+            snprintf(msg, sizeof(msg), "- %s\n", clients[i].username);
+            send(sock, msg, strlen(msg), 0);
+          }
+        }
+        send_to_client(sock, "------------------------------\n");
       } else {
         send_to_client(sock, "Commande inconnue.\n");
       }
