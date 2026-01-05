@@ -95,6 +95,13 @@ void ui_history_down() {
     }
 }
 
+// /create [nom_canal] [public/private]
+
+// /join [nom du canal]
+
+// /leave // leaves the current canal to go back to the main canal
+
+// /delete [nom canal] // only if admin of cannal (creator by default)
 
 void ui_print_help() {
     pthread_mutex_lock(&print_lock);
@@ -102,6 +109,9 @@ void ui_print_help() {
     printf(C_YELLOW " --- AIDE ---\n" C_RESET);
     printf(" /quit      : Quitter\n");
     printf(" /commandes : Ce menu\n");
+    printf(" /create [nom_canal] [public/private] : Créer un canal \n");
+    printf(" /join [nom du canal] : Rejoindre un canal \n");
+    printf(" /leave : Quitter le canal\n");
     printf(" Flèches    : Historique\n");
     printf(C_BLUE C_BOLD " ➤ Saisie " C_RESET "> %s", input_buffer);
     fflush(stdout);
