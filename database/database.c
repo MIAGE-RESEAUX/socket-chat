@@ -55,6 +55,7 @@ int db_query(const char *sql, int (*callback)(void *, int, char **, char **),
 
 // Example default callback
 int print_row(void *unused, int argc, char **argv, char **colname) {
+  (void)unused;
   for (int i = 0; i < argc; i++) {
     printf("%s = %s\n", colname[i], argv[i] ? argv[i] : "NULL");
   }
@@ -110,6 +111,7 @@ int db_list_public_channels(int (*callback)(void *, int, char **, char **),
 
 // Helper callback for getting integer ID
 static int db_get_int_cb(void *out_id, int argc, char **argv, char **colname) {
+  (void)colname;
   if (argc > 0 && argv[0]) {
     *(int *)out_id = atoi(argv[0]);
   }
@@ -126,20 +128,10 @@ int db_get_channel_id(const char *name) {
 }
 
 // Helper callback for fetching password
-static int db_get_pass_cb(void *out_pass, int argc, char **argv,
-                          char **colname) {
-  if (argc > 0 && argv[0]) {
-    strncpy((char *)out_pass, argv[0], 64);
-  } else {
-    // If password column is NULL (e.g. public channel or no password set
-    // correctly)
-    ((char *)out_pass)[0] = '\0';
-  }
-  return 0;
-}
 
 // Quick local callback for string
 static int get_str_cb(void *out, int argc, char **argv, char **col) {
+  (void)col;
   if (argc > 0 && argv[0])
     strcpy((char *)out, argv[0]);
   return 0;
