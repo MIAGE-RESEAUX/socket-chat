@@ -91,6 +91,7 @@ void broadcast_message(char *message, int sender_index) {
 // --- Callbacks Base de Données ---
 
 int send_hist_cb(void *ctx, int argc, char **argv, char **col) {
+  (void)col;
   int index = *(int *)ctx;
   if (argc >= 3) {
     char hist_msg[BUFFER_SIZE];
@@ -158,6 +159,7 @@ void traiter_auth(int index, char *buffer) {
 
 // Callback for listing channels
 int send_channel_list_cb(void *ctx, int argc, char **argv, char **col) {
+  (void)col;
   int socket = *(int *)ctx;
   if (argc >= 2) {
     char msg[256];
