@@ -1,6 +1,6 @@
 #include "client_ui.h"
+#include "file_transfer/file_transfer.h"
 #include <arpa/inet.h>
-#include <libgen.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -8,92 +8,11 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
-#define MAX_FILE_SIZE 10485760  // 10 MB
-#define MEDIA_DIR "./medias"
-
-// FILE_TRANSFER: début - Fonctions utilitaires
-
-// Créer le répertoire medias s'il n'existe pas
-void ensure_media_directory() {
-  struct stat st = {0};
-  if (stat(MEDIA_DIR, &st) == -1) {
-    mkdir(MEDIA_DIR, 0700);
-  }
-}
-
-// Extraire le nom de fichier d'un chemin
-void extract_filename_from_path(const char *path, char *filename) {
-  char *path_copy = strdup(path);
-  char *base = basename(path_copy);
-  strcpy(filename, base);
-  free(path_copy);
-}
-
-// Valider la taille du fichier
-int validate_file_size(uint32_t size) { return size <= MAX_FILE_SIZE; }
-
-// Lire un fichier local
-unsigned char *read_local_file(const char *filepath, uint32_t *file_size) {
-  FILE *file = fopen(filepath, "rb");
-  if (!file) {
-    return NULL;
-  }
-
-  // Obtenir la taille du fichier
-  fseek(file, 0, SEEK_END);
-  *file_size = ftell(file);
-  fseek(file, 0, SEEK_SET);
-
-  // Vérifier la taille
-  if (!validate_file_size(*file_size)) {
-    fclose(file);
-    return NULL;
-  }
-
-  // Allouer et lire
-  unsigned char *data = malloc(*file_size);
-  if (!data) {
-    fclose(file);
-    return NULL;
-  }
-
-  size_t bytes_read = fread(data, 1, *file_size, file);
-  fclose(file);
-
-  if (bytes_read != *file_size) {
-    free(data);
-    return NULL;
-  }
-
-  return data;
-}
-
-// Sauvegarder un fichier reçu
-int save_received_file(const char *filename, unsigned char *data,
-                       uint32_t size) {
-  ensure_media_directory();
-
-  char filepath[512];
-  snprintf(filepath, sizeof(filepath), "%s/%s", MEDIA_DIR, filename);
-
-  FILE *file = fopen(filepath, "wb");
-  if (!file) {
-    return 0;
-  }
-
-  size_t bytes_written = fwrite(data, 1, size, file);
-  fclose(file);
-
-  return bytes_written == size;
-}
-
-// FILE_TRANSFER: fin
 
 void erreur(const char *msg) {
   ui_set_raw_mode(0);
@@ -185,60 +104,31 @@ void phase_chat(int sock) {
         break;
       }
 
-      // FILE_TRANSFER: début - Réception avec length-prefix (SIMPLE!)
-      // Détecter si c'est un transfert de fichier (commence par 4 bytes)
+      // FILE_TRANSFER: début - Réception avec length-prefix (MODULE!)
       if (n >= 4) {
         uint32_t potential_size;
         memcpy(&potential_size, buffer, 4);
         uint32_t message_size = ntohl(potential_size);
 
         // Si taille raisonnable, c'est un fichier
-        if (message_size > 50 && message_size < (MAX_FILE_SIZE + 1024)) {
-          // Allouer mémoire pour le message complet
-          unsigned char *full_message = malloc(message_size);
-          if (!full_message) {
-            ui_print_pretty_msg("[Erreur] Mémoire insuffisante\n");
-            ui_refresh_prompt();
-            continue;
-          }
+        if (message_size > 50 && message_size < (MAX_FILE_SIZE + 2048)) {
+          unsigned char *full_message = NULL;
 
-          // Copier ce qui a déjà été reçu (après les 4 bytes de taille)
-          int already = n - 4;
-          if (already > 0) {
-            memcpy(full_message, buffer + 4, already);
-          }
+          // Recevoir le message complet avec le module
+          int received_size = receive_file_message(sock, (unsigned char *)buffer,
+                                                   n, &full_message);
 
-          // Recevoir le reste du message (BOUCLE SIMPLE)
-          uint32_t received = already;
-          while (received < message_size) {
-            int nr =
-                recv(sock, full_message + received, message_size - received, 0);
-            if (nr <= 0) {
-              free(full_message);
-              ui_print_pretty_msg("[Erreur] Réception interrompue\n");
-              ui_refresh_prompt();
-              goto skip_file;
-            }
-            received += nr;
-          }
+          if (received_size > 0) {
+            // Parser le message
+            char filename[256], extension[10], username[64];
+            uint32_t file_size;
+            unsigned char *data_start = NULL;
 
-          // Maintenant on a TOUT le message, parser facilement !
-          char filename[256];
-          char extension[10];
-          char username[64];
-          uint32_t file_size;
-
-          if (sscanf((char *)full_message, "FILE|%255[^|]|%u|%9[^|]|%63[^\n]",
-                     filename, &file_size, extension, username) == 4) {
-
-            // Trouver le début des données (après le \n)
-            char *data_start = strchr((char *)full_message, '\n');
-            if (data_start) {
-              data_start++; // Sauter le \n
+            if (parse_file_message(full_message, filename, &file_size,
+                                  extension, username, &data_start)) {
 
               // Sauvegarder le fichier
-              if (save_received_file(filename, (unsigned char *)data_start,
-                                     file_size)) {
+              if (save_received_file(filename, data_start, file_size)) {
                 char msg[512];
                 snprintf(msg, sizeof(msg),
                          "\n[%s] 📎 Fichier reçu: %s (%u octets)\n", username,
@@ -250,11 +140,14 @@ void phase_chat(int sock) {
                 ui_refresh_prompt();
               }
             }
-          }
 
-          free(full_message);
-        skip_file:
-          continue; // Pas de fall-through vers le texte normal
+            free(full_message);
+          } else {
+            ui_print_pretty_msg("[Erreur] Réception interrompue\n");
+            ui_refresh_prompt();
+            if (full_message) free(full_message);
+          }
+          continue;
         }
       }
       // FILE_TRANSFER: fin
@@ -301,7 +194,7 @@ void phase_chat(int sock) {
               char extension[10];
               uint32_t file_size;
 
-              // Lire le fichier depuis le disque
+              // Lire le fichier depuis le disque (utilise le module)
               unsigned char *file_data = read_local_file(filepath, &file_size);
               if (!file_data) {
                 ui_print_pretty_msg(
@@ -309,60 +202,24 @@ void phase_chat(int sock) {
                     "ou taille > 10MB)\n");
                 ui_refresh_prompt();
               } else {
-                // Extraire le nom du fichier
+                // Extraire le nom et l'extension
                 extract_filename_from_path(filepath, filename);
+                get_file_extension(filename, extension, sizeof(extension));
 
-                // Extraire l'extension
-                char *dot = strrchr(filename, '.');
-                if (dot) {
-                  strncpy(extension, dot, sizeof(extension) - 1);
-                  extension[sizeof(extension) - 1] = '\0';
+                // Envoyer le fichier avec le module (protocole length-prefixed)
+                if (send_file_message(sock, filename, extension, file_data,
+                                     file_size) == 0) {
+                  char msg[BUFFER_SIZE];
+                  snprintf(msg, sizeof(msg),
+                           "[Moi] 📎 Fichier envoyé: %s (%u octets)\n", filename,
+                           file_size);
+                  ui_print_pretty_msg(msg);
+                  ui_refresh_prompt();
                 } else {
-                  strcpy(extension, "");
+                  ui_print_pretty_msg("[Erreur] Échec d'envoi\n");
+                  ui_refresh_prompt();
                 }
 
-                // Préparer le header
-                char header[BUFFER_SIZE];
-                snprintf(header, sizeof(header), "FILE|%s|%u|%s\n", filename,
-                         file_size, extension);
-
-                // Calculer taille totale
-                const char *file_end = "FILE_END\n";
-                uint32_t total_size =
-                    strlen(header) + file_size + strlen(file_end);
-
-                // 1. Envoyer la taille totale (network byte order)
-                uint32_t net_size = htonl(total_size);
-                send(sock, &net_size, sizeof(net_size), 0);
-
-                // 2. Envoyer le header
-                send(sock, header, strlen(header), 0);
-
-                // 3. Envoyer les données binaires
-                uint32_t sent = 0;
-                while (sent < file_size) {
-                  int n = send(sock, file_data + sent, file_size - sent, 0);
-                  if (n <= 0) {
-                    ui_print_pretty_msg("[Erreur] Échec d'envoi\n");
-                    ui_refresh_prompt();
-                    free(file_data);
-                    goto cleanup_send;
-                  }
-                  sent += n;
-                }
-
-                // 4. Envoyer le marqueur de fin
-                send(sock, file_end, strlen(file_end), 0);
-
-                // Confirmation
-                char msg[BUFFER_SIZE];
-                snprintf(msg, sizeof(msg),
-                         "[Moi] 📎 Fichier envoyé: %s (%u octets)\n", filename,
-                         file_size);
-                ui_print_pretty_msg(msg);
-                ui_refresh_prompt();
-
-              cleanup_send:
                 free(file_data);
               }
             }
