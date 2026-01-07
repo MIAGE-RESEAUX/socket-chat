@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -28,6 +29,39 @@ typedef struct {
 
 // Tableau global des clients
 ClientContext clients[MAX_CLIENTS];
+
+// --- Fonctions utilitaires pour transfert de fichiers ---
+
+#define MAX_FILE_SIZE 10485760  // 10 MB
+
+// Extensions de fichiers autorisées
+const char *ALLOWED_EXTENSIONS[] = {".jpg", ".jpeg", ".png", ".pdf", ".txt",
+                                    NULL};
+
+// Extraire l'extension d'un fichier
+void get_file_extension(const char *filename, char *ext, size_t ext_len) {
+  const char *dot = strrchr(filename, '.');
+  if (dot && dot != filename) {
+    strncpy(ext, dot, ext_len - 1);
+    ext[ext_len - 1] = '\0';
+    // Convertir en minuscules
+    for (int i = 0; ext[i]; i++) {
+      ext[i] = tolower(ext[i]);
+    }
+  } else {
+    ext[0] = '\0';
+  }
+}
+
+// Valider l'extension du fichier
+int validate_file_extension(const char *ext) {
+  for (int i = 0; ALLOWED_EXTENSIONS[i] != NULL; i++) {
+    if (strcmp(ext, ALLOWED_EXTENSIONS[i]) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
 
 // --- Fonctions de gestion de la liste des clients ---
 
@@ -87,6 +121,49 @@ void broadcast_message(char *message, int sender_index) {
     }
   }
 }
+
+// FILE_TRANSFER: début - Broadcast de fichiers
+// Diffuse un fichier à tous les AUTRES clients AUTHENTIFIÉS du canal
+// Utilise un protocole length-prefixed (bonne pratique réseau)
+void broadcast_file(const char *filename, const char *extension,
+                    unsigned char *file_data, uint32_t file_size,
+                    int sender_index) {
+  char header[BUFFER_SIZE];
+  const char *file_end = "FILE_END\n";
+
+  // Formatage du header : FILE|filename|filesize|extension|username
+  snprintf(header, sizeof(header), "FILE|%s|%u|%s|%s\n", filename, file_size,
+           extension, clients[sender_index].username);
+
+  // Calculer la taille totale du message
+  uint32_t header_len = strlen(header);
+  uint32_t total_size = header_len + file_size + strlen(file_end);
+
+  int current_channel = clients[sender_index].channel_id;
+
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clients[i].socket != 0 && i != sender_index &&
+        clients[i].authenticated && clients[i].channel_id == current_channel) {
+
+      // 1. Envoyer la taille totale (network byte order - bonne pratique)
+      uint32_t net_size = htonl(total_size);
+      send(clients[i].socket, &net_size, sizeof(net_size), 0);
+
+      // 2. Envoyer le header
+      send(clients[i].socket, header, header_len, 0);
+
+      // 3. Envoyer les données binaires
+      send(clients[i].socket, file_data, file_size, 0);
+
+      // 4. Envoyer le marqueur de fin
+      send(clients[i].socket, file_end, strlen(file_end), 0);
+    }
+  }
+
+  printf("[FILE_TRANSFER] %s a broadcasté %s (%u bytes) dans le canal %d\n",
+         clients[sender_index].username, filename, file_size, current_channel);
+}
+// FILE_TRANSFER: fin
 
 // --- Callbacks Base de Données ---
 
@@ -199,6 +276,90 @@ void traiter_donnees_client(int index) {
     traiter_auth(index, buffer);
   } else {
     // Cas 2: Déjà connecté
+
+    // FILE_TRANSFER: début - Réception avec length-prefix
+    // Vérifier si c'est un transfert de fichier (commence par 4 bytes = taille)
+    // On détecte cela si le premier recv a reçu exactement 4 bytes ou si buffer
+    // commence par des bytes binaires
+    if (n >= 4) {
+      // Essayer de lire comme une taille (network byte order)
+      uint32_t potential_size;
+      memcpy(&potential_size, buffer, 4);
+      uint32_t message_size = ntohl(potential_size);
+
+      // Si la taille est raisonnable (< 11 MB), c'est probablement un fichier
+      if (message_size > 0 && message_size < (MAX_FILE_SIZE + 1024)) {
+        // C'est un transfert de fichier !
+
+        // Allouer mémoire pour le message complet
+        unsigned char *full_message = malloc(message_size);
+        if (!full_message) {
+          send_to_client(sock, "Erreur: Mémoire insuffisante.\n");
+          return;
+        }
+
+        // Copier ce qui a déjà été reçu après les 4 bytes de taille
+        int already_received = n - 4;
+        if (already_received > 0) {
+          memcpy(full_message, buffer + 4, already_received);
+        }
+
+        // Recevoir le reste du message
+        uint32_t total_received = already_received;
+        while (total_received < message_size) {
+          int nr = recv(sock, full_message + total_received,
+                        message_size - total_received, 0);
+          if (nr <= 0) {
+            free(full_message);
+            printf("[FILE_TRANSFER] Erreur réception\n");
+            supprimer_client(index);
+            return;
+          }
+          total_received += nr;
+        }
+
+        // Parser le header dans le message complet
+        char filename[256];
+        char extension[10];
+        uint32_t file_size;
+        if (sscanf((char *)full_message, "FILE|%255[^|]|%u|%9s", filename,
+                   &file_size, extension) == 3) {
+
+          // Valider l'extension
+          if (!validate_file_extension(extension)) {
+            send_to_client(sock,
+                           "Erreur: Type de fichier non autorisé (jpg, jpeg, "
+                           "png, pdf, txt uniquement).\n");
+            free(full_message);
+            return;
+          }
+
+          // Valider la taille
+          if (file_size > MAX_FILE_SIZE) {
+            send_to_client(sock, "Erreur: Fichier trop gros (max 10 MB).\n");
+            free(full_message);
+            return;
+          }
+
+          // Trouver le début des données (après le \n du header)
+          char *data_start = strchr((char *)full_message, '\n');
+          if (data_start) {
+            data_start++; // Sauter le \n
+
+            printf("[FILE_TRANSFER] Reçu %s (%u bytes) de %s\n", filename,
+                   file_size, clients[index].username);
+
+            // Broadcaster le fichier
+            broadcast_file(filename, extension, (unsigned char *)data_start,
+                           file_size, index);
+          }
+        }
+
+        free(full_message);
+        return;
+      }
+    }
+    // FILE_TRANSFER: fin
 
     // Commandes Channel
     if (buffer[0] == '/') {
