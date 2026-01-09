@@ -1,4 +1,5 @@
 #include "client_ui.h"
+#include "file_transfer/file_transfer.h"
 #include "images/renderer.h"
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -100,9 +101,60 @@ void phase_chat(int sock) {
       memset(buffer, 0, BUFFER_SIZE);
       int n = recv(sock, buffer, BUFFER_SIZE - 1, 0);
       if (n <= 0) {
-        ui_print_pretty_msg("!!! Serveur déconnecté.");
+        ui_print_pretty_msg("!!! Serveur déconnecté.\n");
         break;
       }
+
+      // FILE_TRANSFER: début - Réception avec length-prefix (MODULE!)
+      if (n >= 4) {
+        uint32_t potential_size;
+        memcpy(&potential_size, buffer, 4);
+        uint32_t message_size = ntohl(potential_size);
+
+        // Si taille raisonnable, c'est un fichier
+        if (message_size > 50 && message_size < (MAX_FILE_SIZE + 2048)) {
+          unsigned char *full_message = NULL;
+
+          // Recevoir le message complet avec le module
+          int received_size = receive_file_message(
+              sock, (unsigned char *)buffer, n, &full_message);
+
+          if (received_size > 0) {
+            // Parser le message
+            char filename[256], extension[10], username[64];
+            uint32_t file_size;
+            unsigned char *data_start = NULL;
+
+            if (parse_file_message(full_message, filename, &file_size,
+                                   extension, username, &data_start)) {
+
+              // Sauvegarder le fichier
+              if (save_received_file(filename, data_start, file_size)) {
+                char msg[512];
+                snprintf(msg, sizeof(msg),
+                         "\n[%s] 📎 Fichier reçu: %s (%u octets)\n", username,
+                         filename, file_size);
+                ui_print_pretty_msg(msg);
+                ui_refresh_prompt();
+              } else {
+                ui_print_pretty_msg("[Erreur] Échec sauvegarde\n");
+                ui_refresh_prompt();
+              }
+            }
+
+            free(full_message);
+          } else {
+            ui_print_pretty_msg("[Erreur] Réception interrompue\n");
+            ui_refresh_prompt();
+            if (full_message)
+              free(full_message);
+          }
+          continue;
+        }
+      }
+      // FILE_TRANSFER: fin
+
+      // Message texte normal
       buffer[n] = '\0';
       buffer[n] = '\0';
       ui_print_pretty_msg(buffer);
@@ -156,7 +208,44 @@ void phase_chat(int sock) {
 
             ui_reset_input();
 
-            if (strcmp(temp_msg, "/commandes") == 0) {
+            // FILE_TRANSFER: début - Commande /sendfile
+            if (strncmp(temp_msg, "/sendfile ", 10) == 0) {
+              char *filepath = temp_msg + 10;
+              char filename[256];
+              char extension[10];
+              uint32_t file_size;
+
+              // Lire le fichier depuis le disque (utilise le module)
+              unsigned char *file_data = read_local_file(filepath, &file_size);
+              if (!file_data) {
+                ui_print_pretty_msg(
+                    "[Erreur] Impossible de lire le fichier (chemin invalide "
+                    "ou taille > 10MB)\n");
+                ui_refresh_prompt();
+              } else {
+                // Extraire le nom et l'extension
+                extract_filename_from_path(filepath, filename);
+                get_file_extension(filename, extension, sizeof(extension));
+
+                // Envoyer le fichier avec le module (protocole length-prefixed)
+                if (send_file_message(sock, filename, extension, file_data,
+                                      file_size) == 0) {
+                  char msg[BUFFER_SIZE];
+                  snprintf(msg, sizeof(msg),
+                           "[Moi] 📎 Fichier envoyé: %s (%u octets)\n",
+                           filename, file_size);
+                  ui_print_pretty_msg(msg);
+                  ui_refresh_prompt();
+                } else {
+                  ui_print_pretty_msg("[Erreur] Échec d'envoi\n");
+                  ui_refresh_prompt();
+                }
+
+                free(file_data);
+              }
+            }
+            // FILE_TRANSFER: fin
+            else if (strcmp(temp_msg, "/commandes") == 0) {
               ui_print_help();
             } else if (strncmp(temp_msg, "/image ", 7) == 0) {
               // Extract path
