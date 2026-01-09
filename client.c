@@ -1,4 +1,5 @@
 #include "client_ui.h"
+#include "images/renderer.h"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -103,7 +104,26 @@ void phase_chat(int sock) {
         break;
       }
       buffer[n] = '\0';
+      buffer[n] = '\0';
       ui_print_pretty_msg(buffer);
+
+      // Détection d'image dans le message reçu
+      // Format attendu: "[User] [IMG] path/to/image"
+      char *img_tag = strstr(buffer, "[IMG] ");
+      if (img_tag) {
+        char *path = img_tag + 6; // Skip "[IMG] "
+        // Trouver la fin du path (fin de string ou autre)
+        // Ici on suppose que le path va jusqu'au bout
+        // On supprime d'éventuels caractères de contrôle
+        path[strcspn(path, "\n")] = 0;
+        path[strcspn(path, "\r")] = 0;
+
+        // Render
+        printf("\r\033[K"); // Clear current line (prompt)
+        fflush(stdout);
+        img_render_file(path, 80);
+        ui_refresh_prompt(); // Redraw prompt below image
+      }
     }
 
     if (FD_ISSET(STDIN_FILENO, &sockets_actifs)) {
@@ -138,6 +158,28 @@ void phase_chat(int sock) {
 
             if (strcmp(temp_msg, "/commandes") == 0) {
               ui_print_help();
+            } else if (strncmp(temp_msg, "/image ", 7) == 0) {
+              // Extract path
+              char *path = temp_msg + 7;
+              // Remove potential trailing newline
+              path[strcspn(path, "\n")] = 0;
+
+              // Affichage Local
+              char info_msg[256];
+              snprintf(info_msg, sizeof(info_msg),
+                       "[INFO] Affichage de l'image: %s", path);
+              ui_print_pretty_msg(info_msg);
+
+              printf("\r\033[K"); // Clear current line (prompt)
+              fflush(stdout);
+              img_render_file(path, 80); // Largeur max 80
+              ui_refresh_prompt();       // Redraw prompt below image
+
+              // Envoyer le signal aux autres clients
+              char send_buf[BUFFER_SIZE];
+              snprintf(send_buf, sizeof(send_buf), "[IMG] %s", path);
+              send(sock, send_buf, strlen(send_buf), 0);
+
             } else if (strcmp(temp_msg, "/quit") == 0) {
               break;
             } else {

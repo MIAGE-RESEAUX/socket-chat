@@ -122,6 +122,7 @@ void ui_print_help() {
   printf(" /join [id_canal] : Rejoindre un canal \n");
   printf(" /list      : Lister les canaux publics\n");
   printf(" /users     : Utilisateurs connectés au canal\n");
+  printf(" /image [path] : Envoyer une image (locale)\n");
   printf(" /leave     : Quitter le canal\n");
   printf(" Flèches    : Historique\n");
   printf(C_BLUE C_BOLD " ➤ Saisie " C_RESET "> %s", input_buffer);

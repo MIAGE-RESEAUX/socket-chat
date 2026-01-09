@@ -1,7 +1,7 @@
 # Simple Makefile for your C project using SQLite
 
 CC = gcc
-CFLAGS = -Wall -Wextra -I./database -I./auth -I/opt/homebrew/include
+CFLAGS = -Wall -Wextra -I./database -I./auth -I./images -I/opt/homebrew/include
 LDFLAGS = -lsqlite3 -L/opt/homebrew/lib -ldl -lpthread
 
 
@@ -11,7 +11,7 @@ SRC_COMMON = database/database.c \
 
 # Server and client sources
 SERVER_SRC = server.c $(SRC_COMMON)
-CLIENT_SRC = client.c client_ui.c $(SRC_COMMON)
+CLIENT_SRC = client.c client_ui.c images/renderer.c $(SRC_COMMON)
 
 # Object files
 OBJ_SERVER = $(SERVER_SRC:.c=.o)
