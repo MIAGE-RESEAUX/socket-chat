@@ -1,4 +1,4 @@
-#include "client_ui.h"
+#include "ui/ui_shared.h"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -56,6 +56,9 @@ void phase_authentification(int sock) {
     if (strlen(buffer) == 0)
       continue;
 
+    char last_cmd[BUFFER_SIZE];
+    strncpy(last_cmd, buffer, BUFFER_SIZE);
+
     send(sock, buffer, strlen(buffer), 0);
     int valread = recv(sock, buffer, BUFFER_SIZE - 1, 0);
     if (valread <= 0)
@@ -63,6 +66,11 @@ void phase_authentification(int sock) {
     buffer[valread] = '\0';
 
     if (strncmp(buffer, "SUCCES_SESSION", 14) == 0) {
+      // Extract username from last command if it was LOGIN or SIGNUP
+      char cmd[10], u[64], p[64];
+      if (sscanf(last_cmd, "%s %s %s", cmd, u, p) >= 2) {
+          strncpy(current_username, u, 63);
+      }
       printf(C_GREEN " ✔ Succès !" C_RESET "\n");
       sleep(1);
       return;
@@ -102,26 +110,56 @@ void phase_chat(int sock) {
         ui_print_pretty_msg("!!! Serveur déconnecté.");
         break;
       }
+      if (n <= 0) {
+        ui_print_pretty_msg("!!! Serveur déconnecté.");
+        break;
+      }
       buffer[n] = '\0';
-      ui_print_pretty_msg(buffer);
+
+      // Process buffer line by line to handle concatenated messages
+      char *line = strtok(buffer, "\n");
+      static int current_channel_id = 1; // Track current channel
+
+      while (line != NULL) {
+          // Check for Special Commands
+          if (strncmp(line, "JOIN_SUCCESS", 12) == 0) {
+              int cid = 0;
+              sscanf(line, "JOIN_SUCCESS %d", &cid);
+              current_channel_id = cid;
+              ui_print_channel_header(current_channel_id);
+          } else if (strncmp(line, "Retour au canal", 15) == 0) {
+              current_channel_id = 1;
+              ui_print_channel_header(current_channel_id);
+          } else if (strncmp(line, "HISTORY_END", 11) == 0) {
+              // History loaded. Clear screen and show header
+              ui_print_channel_header(current_channel_id);
+          } else if (strncmp(line, "SUCCES_SESSION", 14) == 0) {
+              // Reset channel to 1 on new session
+              current_channel_id = 1;
+              ui_print_pretty_msg(line);
+          } else {
+              ui_print_pretty_msg(line);
+          }
+          
+          line = strtok(NULL, "\n");
+      }
     }
 
     if (FD_ISSET(STDIN_FILENO, &sockets_actifs)) {
       char ch;
       if (read(STDIN_FILENO, &ch, 1) > 0) {
 
-        if (ch == '\033') {
+        if (ch == '\033') { // Echap sequence
           char seq[2];
-          if (read(STDIN_FILENO, &seq[0], 1) == 0)
-            continue;
-          if (read(STDIN_FILENO, &seq[1], 1) == 0)
-            continue;
+          if (read(STDIN_FILENO, &seq[0], 1) == 0) continue;
+          if (read(STDIN_FILENO, &seq[1], 1) == 0) continue;
 
           if (seq[0] == '[') {
-            if (seq[1] == 'A') {
-              ui_history_up();
-            } else if (seq[1] == 'B') {
-              ui_history_down();
+            switch(seq[1]) {
+              case 'A': ui_history_up(); break;
+              case 'B': ui_history_down(); break;
+              case 'C': ui_move_cursor_right(); break;
+              case 'D': ui_move_cursor_left(); break;
             }
           }
           continue;
@@ -135,33 +173,41 @@ void phase_chat(int sock) {
             strcpy(temp_msg, input_buffer);
 
             ui_reset_input();
+            ui_refresh_prompt(); // Clear line and reset prompt
 
             if (strcmp(temp_msg, "/commandes") == 0) {
               ui_print_help();
             } else if (strcmp(temp_msg, "/quit") == 0) {
               break;
+            } else if (strcmp(temp_msg, "/leave") == 0) {
+                // Special handling for leave to clear screen locally
+                send(sock, temp_msg, strlen(temp_msg), 0);
+                // We will rely on server response or local heuristic?
+                // Server sends "Retour au canal général."
+                // Let's just send it.
             } else {
+              // Local echo done by server broadcast usually?
+              // Code used to do: ui_print_pretty_msg("[Moi] ...");
+              // We should keep that for immediate feedback?
+              // Update: The previous code printed "[Moi]" locally.
+              // We should continue doing that.
+              
               char my_formatted_msg[BUFFER_SIZE + 10];
-              snprintf(my_formatted_msg, sizeof(my_formatted_msg), "[Moi] %s",
-                       temp_msg);
+              snprintf(my_formatted_msg, sizeof(my_formatted_msg), "[Moi] %s", temp_msg);
               ui_print_pretty_msg(my_formatted_msg);
 
               send(sock, temp_msg, strlen(temp_msg), 0);
             }
           } else {
-            printf("\r\n");
-            ui_refresh_prompt();
+             // Saisie vide, on fait rien ou juste refresh
+             ui_refresh_prompt();
           }
-        } else if (ch == 127 || ch == '\b') {
+        } else if (ch == 127 || ch == '\b') { // Backspace
           ui_delete_char();
-        } else if (ch == 3) {
+        } else if (ch == 3) { // Ctrl-C
           break;
         } else if (ch >= 32 && ch <= 126) {
-          if (input_len < BUFFER_SIZE - 1) {
-            input_buffer[input_len++] = ch;
-            input_buffer[input_len] = '\0';
-            ui_print_char(ch);
-          }
+           ui_insert_char(ch);
         }
       }
     }

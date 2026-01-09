@@ -91,15 +91,16 @@ void broadcast_message(char *message, int sender_index) {
 // --- Callbacks Base de Données ---
 
 int send_hist_cb(void *ctx, int argc, char **argv, char **col) {
-  (void)col;
+  (void)col; // Silence unused parameter warning
   int index = *(int *)ctx;
   if (argc >= 3) {
     char hist_msg[BUFFER_SIZE];
     // argv[0]=username, argv[1]=content, argv[2]=timestamp
-    snprintf(hist_msg, sizeof(hist_msg), "[%s] %s", argv[0], argv[1]);
+    // Format: [TIMESTAMP] [User] Message
+    snprintf(hist_msg, sizeof(hist_msg), "[%s] [%s] %s\n", argv[2], argv[0], argv[1]);
     if (clients[index].socket > 0) {
       send(clients[index].socket, hist_msg, strlen(hist_msg), 0);
-      usleep(1000);
+      usleep(1000); // Slight delay to ensure order/buffering
     }
   }
   return 0;
@@ -127,15 +128,14 @@ void traiter_auth(int index, char *buffer) {
       send_to_client(socket, "ECHEC_AUTH: Login ou mdp incorrect.\n");
   } else if (strcmp(command, "SIGNUP") == 0) {
     if (auth_signup(user, pass)) {
-      send_to_client(
-          socket,
-          "SUCCES_INSCRIPTION: Vous pouvez maintenant vous connecter.\n");
+      // Auto-login enabling: We do NOT send a separate success message here.
+      // We let the unified success block below send SUCCES_SESSION.
+      success = true; 
     } else {
       send_to_client(socket,
                      "ECHEC_AUTH: Utilisateur existe deja ou erreur db.\n");
+      return; 
     }
-    // Do NOT set success = true here. We want explicit LOGIN after signup.
-    return;
   } else {
     send_to_client(socket, "ERREUR: Commande inconnue.\n");
     return;
@@ -149,19 +149,37 @@ void traiter_auth(int index, char *buffer) {
     printf("[AUTH] %s connecté (Socket %d)\n", user, socket);
 
     // Ce message déclenche le passage en mode chat côté client
-    send_to_client(socket,
-                   "SUCCES_SESSION: Bienvenue sur le chat. Canal: Global\n");
+    // We can customize it slightly if we want, or just stick to standard.
+    if (strcmp(command, "SIGNUP") == 0) {
+         send_to_client(socket, "SUCCES_SESSION: Compte créé. Bienvenue !\n");
+    } else {
+         send_to_client(socket, "SUCCES_SESSION: Bienvenue sur le chat. Canal: Global\n");
+    }
 
     // Send history callback
     db_get_history(1, 50, send_hist_cb, &index);
+    send_to_client(socket, "HISTORY_END\n");
   }
 }
 
 // Callback for listing channels
 int send_channel_list_cb(void *ctx, int argc, char **argv, char **col) {
-  (void)col;
+  (void)col; // Silence unused parameter warning
   int socket = *(int *)ctx;
-  if (argc >= 2) {
+  
+  if (argc >= 3) { // Expecting: Name, ID, Type
+    char msg[256];
+    char *name = argv[0];
+    char *id = argv[1];
+    char *type = argv[2];
+    
+    if (strcmp(type, "private") == 0) {
+        snprintf(msg, sizeof(msg), "- %s \033[35m(privé)\033[0m (ID: %s)\n", name, id);
+    } else {
+        snprintf(msg, sizeof(msg), "- %s (ID: %s)\n", name, id);
+    }
+    send(socket, msg, strlen(msg), 0);
+  } else if (argc >= 2) { // Fallback
     char msg[256];
     snprintf(msg, sizeof(msg), "- %s (ID: %s)\n", argv[0], argv[1]);
     send(socket, msg, strlen(msg), 0);
@@ -207,8 +225,7 @@ void traiter_donnees_client(int index) {
 
       if (strcmp(cmd, "/create") == 0) {
         if (args < 3) {
-          send_to_client(sock, "Usage: /create [nom_canal] [public/private] "
-                               "[mdp (si private)]\n");
+          send_to_client(sock, "Usage: /create [nom_canal] [public/private]\n");
         } else {
           char *pass = (args >= 4) ? arg3 : NULL;
           int user_db_id = db_get_user_id(clients[index].username);
@@ -231,12 +248,19 @@ void traiter_donnees_client(int index) {
             send_to_client(sock, "ID de canal invalide.\n");
           } else {
             char *pass = (args >= 3) ? arg2 : NULL;
-            // Validate directly with ID
-            if (db_validate_channel_password(cid, pass)) {
+            int uid = db_get_user_id(clients[index].username);
+            // Validate directly with ID and User ID
+            if (db_validate_channel_password(cid, pass, uid)) {
               clients[index].channel_id = cid;
-              send_to_client(sock, "Vous avez rejoint le canal.\n");
+              char join_msg[128];
+              // Note: We don't have the name easily here without another DB call.
+              // We will send ID and let client handle or server sends simple confirmation.
+              // Ideally: "JOIN_SUCCESS [ID]"
+              snprintf(join_msg, sizeof(join_msg), "JOIN_SUCCESS %d\n", cid);
+              send_to_client(sock, join_msg);
 
               db_get_history(cid, 50, send_hist_cb, &index);
+              send_to_client(sock, "HISTORY_END\n");
 
             } else {
               send_to_client(sock,
@@ -252,8 +276,9 @@ void traiter_donnees_client(int index) {
             sock,
             "Suppression non implémentée (requiert vérification admin).\n");
       } else if (strcmp(cmd, "/list") == 0) {
-        send_to_client(sock, "--- Canaux Publics ---\n");
-        db_list_public_channels(send_channel_list_cb, &sock);
+        send_to_client(sock, "--- Liste des Canaux ---\n");
+        int uid = db_get_user_id(clients[index].username);
+        db_list_viewable_channels(uid, send_channel_list_cb, &sock);
         send_to_client(sock, "----------------------\n");
       } else if (strcmp(cmd, "/users") == 0) {
         char msg[BUFFER_SIZE];
@@ -264,7 +289,7 @@ void traiter_donnees_client(int index) {
         for (int i = 0; i < MAX_CLIENTS; i++) {
           if (clients[i].socket != 0 && clients[i].authenticated &&
               clients[i].channel_id == cid) {
-            snprintf(msg, sizeof(msg), "- %s\n", clients[i].username);
+            snprintf(msg, sizeof(msg), "  %s\n", clients[i].username);
             send(sock, msg, strlen(msg), 0);
           }
         }

@@ -109,6 +109,15 @@ int db_list_public_channels(int (*callback)(void *, int, char **, char **),
   return db_query(query, callback, data);
 }
 
+int db_list_viewable_channels(int user_id, int (*callback)(void *, int, char **, char **),
+                              void *data) {
+  char query[512];
+  snprintf(
+      query, sizeof(query),
+      "SELECT name, id, type FROM channel WHERE type='public' OR admin_id=%d ORDER BY name ASC;", user_id);
+  return db_query(query, callback, data);
+}
+
 // Helper callback for getting integer ID
 static int db_get_int_cb(void *out_id, int argc, char **argv, char **colname) {
   (void)colname;
@@ -130,35 +139,52 @@ int db_get_channel_id(const char *name) {
 // Helper callback for fetching password
 
 // Quick local callback for string
-static int get_str_cb(void *out, int argc, char **argv, char **col) {
+
+
+typedef struct { char type[16]; int admin_id; } ChannelInfo;
+
+static int get_info_cb(void *out, int argc, char **argv, char **col) {
+  (void)col;
+  ChannelInfo *i = (ChannelInfo*)out;
+  if (argc >= 2) {
+      if (argv[0]) strncpy(i->type, argv[0], 15);
+      if (argv[1]) i->admin_id = atoi(argv[1]);
+  }
+  return 0;
+}
+
+static int get_str_cb_local(void *out, int argc, char **argv, char **col) {
   (void)col;
   if (argc > 0 && argv[0])
     strcpy((char *)out, argv[0]);
   return 0;
 }
 
-bool db_validate_channel_password(int channel_id, const char *password) {
-  // 1. Check type. If public, return true.
-  // 2. If private, check password.
+bool db_validate_channel_password(int channel_id, const char *password, int user_id) {
+  // 1. Check type and admin.
+  // 2. If public OR user is admin, return true.
+  // 3. If private, check password.
   char query[256];
-  char stored_type[16] = {0};
+  ChannelInfo info = { .type="", .admin_id=-1 };
+  
+  snprintf(query, sizeof(query), "SELECT type, admin_id FROM channel WHERE id=%d;", channel_id);
+  db_query(query, get_info_cb, &info);
+
+  // If public or user is admin, allow
+  if (strcmp(info.type, "public") == 0) return true;
+  if (info.admin_id == user_id) return true;
+
+  // It is private and not admin, check password
   char stored_pass[64] = {0};
+  snprintf(query, sizeof(query), "SELECT password FROM channel WHERE id=%d;", channel_id);
+  
+  db_query(query, get_str_cb_local, stored_pass);
 
-  // Check type first
-  snprintf(query, sizeof(query), "SELECT type FROM channel WHERE id=%d;",
-           channel_id);
-  db_query(query, get_str_cb, stored_type);
+  // If no password set for this private channel, allow access
+  if (strlen(stored_pass) == 0) return true;
 
-  if (strcmp(stored_type, "public") == 0)
-    return true;
-
-  // It is private, check password
-  snprintf(query, sizeof(query), "SELECT password FROM channel WHERE id=%d;",
-           channel_id);
-  db_query(query, get_str_cb, stored_pass);
-
-  if (password && strcmp(stored_pass, password) == 0)
-    return true;
+  // Otherwise, match password
+  if (password && strcmp(stored_pass, password) == 0) return true;
 
   return false;
 }

@@ -1,9 +1,8 @@
 # Simple Makefile for your C project using SQLite
 
 CC = gcc
-CFLAGS = -Wall -Wextra -I./database -I./auth -I/opt/homebrew/include
+CFLAGS = -Wall -Wextra -I./database -I./auth -I./ui -I/opt/homebrew/include
 LDFLAGS = -lsqlite3 -L/opt/homebrew/lib -ldl -lpthread
-
 
 # Common source files
 SRC_COMMON = database/database.c \
@@ -11,7 +10,8 @@ SRC_COMMON = database/database.c \
 
 # Server and client sources
 SERVER_SRC = server.c $(SRC_COMMON)
-CLIENT_SRC = client.c client_ui.c $(SRC_COMMON)
+# Updated client sources to include new UI modules
+CLIENT_SRC = client.c ui/ui_core.c ui/ui_display.c ui/ui_input.c $(SRC_COMMON)
 
 # Object files
 OBJ_SERVER = $(SERVER_SRC:.c=.o)
@@ -49,7 +49,7 @@ initdb:
 
 # Clean
 clean:
-	rm -f $(OBJ_SERVER) $(OBJ_CLIENT) $(SERVER_TARGET) $(CLIENT_TARGET)
+	rm -f $(OBJ_SERVER) $(OBJ_CLIENT) $(SERVER_TARGET) $(CLIENT_TARGET) *.o
 
 # Reset database manually
 db-reset:

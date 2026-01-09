@@ -26,9 +26,11 @@ int db_create_channel(const char *name, const char *type, const char *password,
                       int admin_id);
 int db_list_public_channels(int (*callback)(void *, int, char **, char **),
                             void *data);
+int db_list_viewable_channels(int user_id, int (*callback)(void *, int, char **, char **),
+                              void *data);
 int db_get_channel_id(const char *name);
-// Returns true if channel is private and password matches, or if public.
-bool db_validate_channel_password(int channel_id, const char *password);
+// Returns true if channel is private and password matches, or if public, or if user is admin.
+bool db_validate_channel_password(int channel_id, const char *password, int user_id);
 int db_save_message(int user_id, int channel_id, const char *content);
 // Callback should print/send lines. limit=0 for all.
 int db_get_history(int channel_id, int limit,
