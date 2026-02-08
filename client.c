@@ -115,6 +115,17 @@ void phase_authentification(int sock) {
 }
 
 /**
+ * @brief Vérifie si une extension correspond à un format d'image supporté.
+ * @param extension Extension du fichier (avec le .).
+ * @return true si image, false sinon.
+ */
+static bool is_image_extension(const char *extension) {
+    return (strcmp(extension, ".png") == 0 ||
+            strcmp(extension, ".jpg") == 0 ||
+            strcmp(extension, ".jpeg") == 0);
+}
+
+/**
  * @brief Boucle principale du chat.
  * Gère les entrées utilisateur (clavier) et les messages reçus du serveur en utilisant `select()`.
  * Active le mode "raw" du terminal pour une gestion fine de l'interface.
@@ -169,15 +180,31 @@ void phase_chat(int sock) {
                  char msg[512];
                  snprintf(msg, sizeof(msg), "\n[%s] 📎 Fichier reçu: %s (%u octets)\n", username, filename, file_size);
                  ui_print_pretty_msg(msg);
+
+                 // Afficher l'image si c'est une image
+                 if (is_image_extension(extension)) {
+                   char saved_path[512];
+                   snprintf(saved_path, sizeof(saved_path), "./medias/%s", filename);
+                   
+                   // On efface la ligne courante pour un affichage propre
+                   printf("\r\033[K");
+                   fflush(stdout);
+                   
+                   img_render_file(saved_path, 80);
+                 }
+                 
+                 ui_refresh_prompt();
                } else {
                  ui_print_pretty_msg("[Erreur] Échec sauvegarde\n");
+                 ui_refresh_prompt();
                }
              }
              free(full_message);
            } else {
              ui_print_pretty_msg("[Erreur] Réception interrompue\n");
+             ui_refresh_prompt();
            }
-           continue; 
+           continue;
         }
       }
       
@@ -192,7 +219,6 @@ void phase_chat(int sock) {
               int cid = 0;
               sscanf(line, "JOIN_SUCCESS %d", &cid);
               current_channel_id = cid;
-              current_channel_id = cid;
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "Retour au canal", 15) == 0) {
               current_channel_id = 1;
@@ -200,7 +226,6 @@ void phase_chat(int sock) {
           } else if (strncmp(line, "HISTORY_END", 11) == 0) {
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "SUCCES_SESSION", 14) == 0) {
-              current_channel_id = 1;
               current_channel_id = 1;
               ui_print_pretty_msg(line);
           } else {
@@ -269,6 +294,14 @@ void phase_chat(int sock) {
                   char msg[BUFFER_SIZE];
                   snprintf(msg, sizeof(msg), "[Moi] 📎 Fichier envoyé: %s (%u octets)\n", filename, file_size);
                   ui_print_pretty_msg(msg);
+
+                  if (is_image_extension(extension)) {
+                    printf("\r\033[K");
+                    fflush(stdout);
+                    img_render_file(filepath, 80);
+                  }
+
+                  ui_refresh_prompt();
                 } else {
                   ui_print_pretty_msg("[Erreur] Échec d'envoi\n");
                 }

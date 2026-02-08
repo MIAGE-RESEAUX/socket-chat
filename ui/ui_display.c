@@ -236,7 +236,6 @@ void ui_print_pretty_msg(const char *msg) {
   }
 
 prompt_refresh:
-  // Reprint prompt
   printf(C_BLUE C_BOLD " ➤ Saisie " C_RESET "> %s", input_buffer);
   if (input_len > cursor_pos) {
       printf("\033[%dD", input_len - cursor_pos);

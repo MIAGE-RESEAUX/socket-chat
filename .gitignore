@@ -4,3 +4,4 @@ database/database.o
 database/database.db
 server
 client
+.DS_Store

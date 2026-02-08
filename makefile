@@ -7,10 +7,12 @@ CC = gcc
 # -Wall -Wextra : Affiche tous les avertissements
 # -I... : Ajoute les répertoires d'en-tête (headers)
 CFLAGS = -Wall -Wextra -I./database -I./auth -I./ui -I./images -I./file_transfer -I/opt/homebrew/include
+
 # Options de l'éditeur de liens (Linker) :
 # -lsqlite3 : Lie avec la bibliothèque SQLite
 # -L... : Ajoute les répertoires de bibliothèque
-LDFLAGS = -lsqlite3 -L/opt/homebrew/lib -ldl -lpthread
+# -lm : Lie avec la bibliothèque mathématique (pour renderer.c)
+LDFLAGS = -lsqlite3 -L/opt/homebrew/lib -ldl -lpthread -lm
 
 # Fichiers sources communs (utilisés par le client et le serveur)
 SRC_COMMON = database/database.c \
