@@ -1,3 +1,14 @@
+/**
+ * @file client.c
+ * @brief Client principal pour l'application Socket-Chat.
+ *
+ * Ce fichier gère l'interface utilisateur en ligne de commande (CLI) et
+ * les communications réseau avec le serveur. Il inclut :
+ * - La connexion au serveur.
+ * - L'authentification (phase 1).
+ * - Le chat en temps réel et les commandes (phase 2).
+ */
+
 #include "ui/ui_shared.h"
 #include "file_transfer/file_transfer.h"
 #include "images/renderer.h"
@@ -13,15 +24,28 @@
 #include <unistd.h>
 #include <stdbool.h>
 
-#define PORT 8080
-#define BUFFER_SIZE 1024
+#define PORT 8080         /**< Port par défaut si non spécifié */
+#define BUFFER_SIZE 1024  /**< Taille du buffer de réception */
 
+/**
+ * @brief Affiche un message d'erreur et quitte le programme.
+ *
+ * @param msg Le message d'erreur à afficher.
+ */
 void erreur(const char *msg) {
-  ui_set_raw_mode(0);
+  ui_set_raw_mode(0); // Restaurer le mode terminal normal
   perror(msg);
   exit(1);
 }
 
+/**
+ * @brief Établit une connexion TCP avec le serveur.
+ * Résout le nom d'hôte et tente de se connecter au port spécifié.
+ *
+ * @param hostname Nom d'hôte ou adresse IP (ex: "127.0.0.1").
+ * @param port Port du serveur.
+ * @return Le descripteur de fichier du socket connecté.
+ */
 int connecter_au_serveur(const char *hostname, int port) {
   int sock;
   struct sockaddr_in serv_addr;
@@ -45,6 +69,12 @@ int connecter_au_serveur(const char *hostname, int port) {
   return sock;
 }
 
+/**
+ * @brief Gère la phase d'authentification (Login/Signup).
+ * Boucle jusqu'à ce que le serveur renvoie "SUCCES_SESSION".
+ *
+ * @param sock Le socket connecté au serveur.
+ */
 void phase_authentification(int sock) {
   char buffer[BUFFER_SIZE];
   ui_show_banner();
@@ -69,7 +99,6 @@ void phase_authentification(int sock) {
     buffer[valread] = '\0';
 
     if (strncmp(buffer, "SUCCES_SESSION", 14) == 0) {
-      // Extract username from last command if it was LOGIN or SIGNUP
       char cmd[10], u[64], p[64];
       if (sscanf(last_cmd, "%s %s %s", cmd, u, p) >= 2) {
           strncpy(current_username, u, 63);
@@ -85,6 +114,13 @@ void phase_authentification(int sock) {
   }
 }
 
+/**
+ * @brief Boucle principale du chat.
+ * Gère les entrées utilisateur (clavier) et les messages reçus du serveur en utilisant `select()`.
+ * Active le mode "raw" du terminal pour une gestion fine de l'interface.
+ *
+ * @param sock Le socket connecté au serveur.
+ */
 void phase_chat(int sock) {
   char buffer[BUFFER_SIZE];
   char temp_msg[BUFFER_SIZE];
@@ -114,8 +150,6 @@ void phase_chat(int sock) {
         ui_print_pretty_msg("!!! Serveur déconnecté.");
         break;
       }
-
-      // --- CHECK FILE TRANSFER (Develop Logic) ---
       if (n >= 4) {
         uint32_t potential_size;
         memcpy(&potential_size, buffer, 4);
@@ -143,21 +177,17 @@ void phase_chat(int sock) {
            } else {
              ui_print_pretty_msg("[Erreur] Réception interrompue\n");
            }
-           // IMPORTANT: If handled as file, continue loop to skip text processing
            continue; 
         }
       }
       
-      // --- STANDARD TEXT PROCESSING (V2 Logic) ---
       buffer[n] = '\0';
 
-      // Process buffer line by line to handle concatenated messages
       char *line = strtok(buffer, "\n");
-      static int current_channel_id = 1; // Track current channel
+      static int current_channel_id = 1;
 
 
       while (line != NULL) {
-          // Check for Special Commands
           if (strncmp(line, "JOIN_SUCCESS", 12) == 0) {
               int cid = 0;
               sscanf(line, "JOIN_SUCCESS %d", &cid);
@@ -168,23 +198,17 @@ void phase_chat(int sock) {
               current_channel_id = 1;
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "HISTORY_END", 11) == 0) {
-              // History logic removed for now
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "SUCCES_SESSION", 14) == 0) {
-              // Reset channel to 1 on new session
               current_channel_id = 1;
-              // Reset channel to 1 on new session
               current_channel_id = 1;
               ui_print_pretty_msg(line);
           } else {
-              // --- IMAGE VISUALIZATION CHECK ---
-              // --- IMAGE VISUALIZATION CHECK ---
               char *img_tag = strstr(line, "[IMG] ");
               if (img_tag) {
                   char *path = img_tag + 6;
-                  path[strcspn(path, "\r")] = 0; // Clean potential carriage return
+                  path[strcspn(path, "\r")] = 0;
                   
-                  // Clear prompt for clean render
                   printf("\r\033[K"); 
                   fflush(stdout);
                   img_render_file(path, 80);
@@ -202,7 +226,7 @@ void phase_chat(int sock) {
       char ch;
       if (read(STDIN_FILENO, &ch, 1) > 0) {
 
-        if (ch == '\033') { // Echap sequence
+        if (ch == '\033') {
           char seq[2];
           if (read(STDIN_FILENO, &seq[0], 1) == 0) continue;
           if (read(STDIN_FILENO, &seq[1], 1) == 0) continue;
@@ -226,9 +250,8 @@ void phase_chat(int sock) {
             strcpy(temp_msg, input_buffer);
 
             ui_reset_input();
-            ui_refresh_prompt(); // Clear line and reset prompt
+            ui_refresh_prompt();
 
-            // --- COMMAND PROCESSING ---
             if (strncmp(temp_msg, "/sendfile ", 10) == 0) {
               char *filepath = temp_msg + 10;
               char filename[256];
@@ -266,7 +289,6 @@ void phase_chat(int sock) {
                img_render_file(path, 80);
                ui_refresh_prompt();
                
-               // Send signal to others
                char send_buf[BUFFER_SIZE];
                snprintf(send_buf, sizeof(send_buf), "[IMG] %s", path);
                send(sock, send_buf, strlen(send_buf), 0);
@@ -276,7 +298,6 @@ void phase_chat(int sock) {
             } else if (strcmp(temp_msg, "/leave") == 0) {
                 send(sock, temp_msg, strlen(temp_msg), 0);
             } else {
-              // Standard message
               char my_formatted_msg[BUFFER_SIZE + 10];
               snprintf(my_formatted_msg, sizeof(my_formatted_msg), "[Moi] %s", temp_msg);
               ui_print_pretty_msg(my_formatted_msg);
@@ -286,9 +307,9 @@ void phase_chat(int sock) {
           } else {
              ui_refresh_prompt();
           }
-        } else if (ch == 127 || ch == '\b') { // Backspace
+        } else if (ch == 127 || ch == '\b') {
           ui_delete_char();
-        } else if (ch == 3) { // Ctrl-C
+        } else if (ch == 3) {
           break;
         } else if (ch >= 32 && ch <= 126) {
            ui_insert_char(ch);
@@ -299,6 +320,16 @@ void phase_chat(int sock) {
   ui_set_raw_mode(0);
 }
 
+/**
+ * @brief Point d'entrée principal du client.
+ *
+ * Analyse les arguments (hostname, port), établit la connexion au serveur,
+ * gère la phase d'authentification, puis lance la boucle principale de chat.
+ *
+ * @param argc Nombre d'arguments.
+ * @param argv Arguments (argv[1] = hostname, argv[2] = port).
+ * @return 0 en cas de succès.
+ */
 int main(int argc, char **argv) {
   char *hostname = "127.0.0.1";
   int port = PORT;

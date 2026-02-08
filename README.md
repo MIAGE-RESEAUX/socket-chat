@@ -8,20 +8,15 @@
 - Rajouter des chats privés via un code unique généré par le serveur. (ex `#4353`)
 - Mettre à jour l'UI en fonction des nouvelles implémentations
 
-#### V3 Informations serveur
+#### V3 Informations serveur + Partage de fichiers / images
 - Rajouter un attribut privé / public sur les canaux Lister les canaux disponibles en public 
 - Lister les utilisateurs disponibles
-#### V3 Historique
-
-- Rajouter un historique de chat sauvé en Base avec un TTL de 3jour. (json par conv)
-- Consultation de l'historique via des commandes.
-#### V4 Partage de fichiers
-- partager un fichier pdf, txt ou png pour un client donnée
-- mettre à jour l'ui en conséquence.
+- Partager un fichier pdf, txt ou png pour un client donnée
+- Mettre à jour l'ui en conséquence.
 
 
 
-#### V2 : 
+#### Prérequis : 
 1. Installer le driver mongodb : 
 - MACOS : `brew install mongo-c-driver`
 - Linux : `sudo apt install libmongoc-dev``

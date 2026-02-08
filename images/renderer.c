@@ -1,3 +1,11 @@
+/**
+ * @file renderer.c
+ * @brief Implémentation du rendu d'images.
+ *
+ * Utilise la bibliothèque stb_image (single header) pour le décodage.
+ * Convertit les pixels en caractères blocks ANSI (e.g. \u2580) pour un affichage "haute résolution" dans le terminal.
+ */
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "renderer.h"
 #include "stb_image.h"
@@ -12,18 +20,27 @@
 #include <sys/stat.h>
 #include <errno.h>
 
-// Structure pour pixel
+/**
+ * @brief Structure représentant un pixel RGB.
+ */
 typedef struct {
-  unsigned char r, g, b;
+  unsigned char r; /**< Composante Rouge */
+  unsigned char g; /**< Composante Verte */
+  unsigned char b; /**< Composante Bleue */
 } Pixel;
 
+/**
+ * @brief Affiche une image dans le terminal.
+ * Redimensionne l'image pour s'adapter à la largeur du terminal ou à max_width.
+ * Utilise des caractères blocs pour une "haute" résolution verticale.
+ *
+ * @param path Chemin vers le fichier image (supporte l'expansion du tilde ~).
+ * @param max_width Largeur maximale en colonnes (0 pour détection automatique).
+ */
 void img_render_file(const char *path, int max_width) {
-  // 1. Expansion du chemin (pour gérer ~)
   wordexp_t exp_result;
   char *real_path = (char *)path;
   bool expanded = false;
-
-
 
   if (wordexp(path, &exp_result, 0) == 0) {
     if (exp_result.we_wordc > 0) {
@@ -32,11 +49,8 @@ void img_render_file(const char *path, int max_width) {
     }
   }
 
-
-
-  // 3. Charger l'image
   int w, h, c;
-  unsigned char *img = stbi_load(real_path, &w, &h, &c, 3); // Force RGB
+  unsigned char *img = stbi_load(real_path, &w, &h, &c, 3);
 
   if (!img) {
     printf("Erreur: Impossible de charger l'image %s (Raison: %s)\n", real_path, stbi_failure_reason());
@@ -48,24 +62,21 @@ void img_render_file(const char *path, int max_width) {
   if (expanded)
     wordfree(&exp_result);
 
-  // 3. Détecter la taille du terminal ou utiliser max_width
   int target_w = max_width;
   if (target_w <= 0) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) != -1) {
-      target_w = ws.ws_col / 2; // Default logic
+      target_w = ws.ws_col / 2;
     } else {
       target_w = 40;
     }
   }
 
-  // Contraintes
   if (target_w > 80)
-    target_w = 80; // Maximum pour la lecture
+    target_w = 80;
   if (target_w < 20)
     target_w = 20;
 
-  // 3. Calcul target_h (Ratio)
   if (w < target_w) {
     target_w = w;
   }
@@ -74,7 +85,6 @@ void img_render_file(const char *path, int max_width) {
   if (target_h % 2 != 0)
     target_h++;
 
-  // 4. Redimensionnement (RMS)
   Pixel *resized = (Pixel *)malloc(target_w * target_h * sizeof(Pixel));
 
   for (int y = 0; y < target_h; y++) {
@@ -120,7 +130,6 @@ void img_render_file(const char *path, int max_width) {
     }
   }
 
-  // 5. Affichage
   for (int y = 0; y < target_h; y += 2) {
     for (int x = 0; x < target_w; x++) {
       Pixel p1 = resized[y * target_w + x];
@@ -131,7 +140,7 @@ void img_render_file(const char *path, int max_width) {
       printf("\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm\xE2\x96\x80", p1.r, p1.g,
              p1.b, p2.r, p2.g, p2.b);
     }
-    printf("\033[0m\r\n"); // \r\n for raw mode compatibility
+    printf("\033[0m\r\n");
   }
 
   free(resized);

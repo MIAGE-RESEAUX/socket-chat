@@ -1,3 +1,10 @@
+/**
+ * @file ui_input.c
+ * @brief Gestion de la saisie utilisateur.
+ *
+ * Gère le buffer d'entrée, le curseur, et l'historique des commandes.
+ */
+
 #include "ui_shared.h"
 
 char input_buffer[BUFFER_SIZE];
@@ -8,15 +15,23 @@ static char history[HISTORY_MAX][BUFFER_SIZE];
 static int history_count = 0;
 static int history_pos = 0;
 
+/**
+ * @brief Réinitialise le buffer d'entrée.
+ */
 void ui_reset_input() {
   memset(input_buffer, 0, BUFFER_SIZE);
   input_len = 0;
   cursor_pos = 0;
 }
 
+/**
+ * @brief Insère un caractère à la position du curseur.
+ * Déplace les caractères suivants vers la droite.
+ *
+ * @param ch Le caractère à insérer.
+ */
 void ui_insert_char(char ch) {
     if (input_len < BUFFER_SIZE - 1) {
-        // Shift content if not at end
         if (cursor_pos < input_len) {
             memmove(input_buffer + cursor_pos + 1, input_buffer + cursor_pos, input_len - cursor_pos);
         }
@@ -28,6 +43,9 @@ void ui_insert_char(char ch) {
     }
 }
 
+/**
+ * @brief Supprime le caractère avant le curseur (Backspace).
+ */
 void ui_delete_char() {
     if (cursor_pos > 0) {
         memmove(input_buffer + cursor_pos - 1, input_buffer + cursor_pos, input_len - cursor_pos);
@@ -52,6 +70,10 @@ void ui_move_cursor_right() {
     }
 }
 
+/**
+ * @brief Ajoute une commande à l'historique.
+ * Si l'historique est plein, supprime la plus ancienne.
+ */
 void ui_history_add(const char *cmd) {
   if (strlen(cmd) == 0)
     return;
@@ -72,7 +94,7 @@ void ui_history_replace_buffer(const char *new_text) {
   memset(input_buffer, 0, BUFFER_SIZE);
   strcpy(input_buffer, new_text);
   input_len = strlen(input_buffer);
-  cursor_pos = input_len; // Set cursor to end
+  cursor_pos = input_len;
   ui_refresh_prompt();
 }
 

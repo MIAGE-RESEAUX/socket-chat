@@ -9,18 +9,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Extensions de fichiers autorisées
+/**
+ * @brief Liste des extensions de fichiers autorisées.
+ */
 const char *ALLOWED_EXTENSIONS[] = {".jpg", ".jpeg", ".png", ".pdf", ".txt",
                                     NULL};
 
-// --- Fonctions utilitaires ---
-
+/**
+ * @brief Extrait l'extension d'un nom de fichier.
+ * @param filename Nom du fichier.
+ * @param ext Buffer de sortie pour l'extension.
+ * @param ext_len Taille du buffer.
+ */
 void get_file_extension(const char *filename, char *ext, size_t ext_len) {
   const char *dot = strrchr(filename, '.');
   if (dot && dot != filename) {
     strncpy(ext, dot, ext_len - 1);
     ext[ext_len - 1] = '\0';
-    // Convertir en minuscules
     for (int i = 0; ext[i]; i++) {
       ext[i] = tolower(ext[i]);
     }
@@ -29,6 +34,11 @@ void get_file_extension(const char *filename, char *ext, size_t ext_len) {
   }
 }
 
+/**
+ * @brief Vérifie si une extension est autorisée.
+ * @param ext Extension à vérifier (avec le point).
+ * @return 1 si autorisée, 0 sinon.
+ */
 int validate_file_extension(const char *ext) {
   for (int i = 0; ALLOWED_EXTENSIONS[i] != NULL; i++) {
     if (strcmp(ext, ALLOWED_EXTENSIONS[i]) == 0) {
@@ -38,10 +48,16 @@ int validate_file_extension(const char *ext) {
   return 0;
 }
 
+/**
+ * @brief Vérifie si la taille du fichier est valide.
+ * @param size Taille en octets.
+ * @return 1 si valide, 0 sinon.
+ */
 int validate_file_size(uint32_t size) { return size <= MAX_FILE_SIZE; }
 
-// --- Fonctions côté client ---
-
+/**
+ * @brief Crée le dossier média s'il n'existe pas.
+ */
 void ensure_media_directory() {
   struct stat st = {0};
   if (stat(MEDIA_DIR, &st) == -1) {
@@ -49,6 +65,11 @@ void ensure_media_directory() {
   }
 }
 
+/**
+ * @brief Extrait le nom de fichier d'un chemin complet.
+ * @param path Chemin complet.
+ * @param filename Buffer de sortie pour le nom de fichier.
+ */
 void extract_filename_from_path(const char *path, char *filename) {
   char *path_copy = strdup(path);
   char *base = basename(path_copy);
@@ -56,24 +77,27 @@ void extract_filename_from_path(const char *path, char *filename) {
   free(path_copy);
 }
 
+/**
+ * @brief Lit un fichier local en mémoire.
+ * @param filepath Chemin du fichier.
+ * @param file_size Pointeur pour stocker la taille du fichier.
+ * @return Pointeur vers les données (doit être libéré), ou NULL en cas d'erreur.
+ */
 unsigned char *read_local_file(const char *filepath, uint32_t *file_size) {
   FILE *file = fopen(filepath, "rb");
   if (!file) {
     return NULL;
   }
 
-  // Obtenir la taille du fichier
   fseek(file, 0, SEEK_END);
   *file_size = ftell(file);
   fseek(file, 0, SEEK_SET);
 
-  // Vérifier la taille
   if (!validate_file_size(*file_size)) {
     fclose(file);
     return NULL;
   }
 
-  // Allouer et lire
   unsigned char *data = malloc(*file_size);
   if (!data) {
     fclose(file);
@@ -91,6 +115,13 @@ unsigned char *read_local_file(const char *filepath, uint32_t *file_size) {
   return data;
 }
 
+/**
+ * @brief Sauvegarde un fichier reçu dans le dossier média.
+ * @param filename Nom du fichier.
+ * @param data Données du fichier.
+ * @param size Taille des données.
+ * @return 1 en cas de succès, 0 sinon.
+ */
 int save_received_file(const char *filename, unsigned char *data,
                        uint32_t size) {
   ensure_media_directory();
@@ -109,32 +140,36 @@ int save_received_file(const char *filename, unsigned char *data,
   return bytes_written == size;
 }
 
-// --- Fonctions réseau (protocole length-prefixed) ---
-
+/**
+ * @brief Envoie un fichier via le socket.
+ * Utilise un protocole simple : TailleTotale + Header + Données + Fin.
+ *
+ * @param sock Socket de destination.
+ * @param filename Nom du fichier.
+ * @param extension Extension du fichier.
+ * @param file_data Contenu du fichier.
+ * @param file_size Taille du fichier.
+ * @return 0 en cas de succès, -1 en cas d'erreur.
+ */
 int send_file_message(int sock, const char *filename, const char *extension,
                       unsigned char *file_data, uint32_t file_size) {
   char header[1024];
   const char *file_end = "FILE_END\n";
 
-  // Préparer le header
   snprintf(header, sizeof(header), "FILE|%s|%u|%s\n", filename, file_size,
            extension);
 
-  // Calculer taille totale
   uint32_t total_size = strlen(header) + file_size + strlen(file_end);
 
-  // 1. Envoyer la taille totale (network byte order)
   uint32_t net_size = htonl(total_size);
   if (send(sock, &net_size, sizeof(net_size), 0) != sizeof(net_size)) {
     return -1;
   }
 
-  // 2. Envoyer le header
   if (send(sock, header, strlen(header), 0) != (ssize_t)strlen(header)) {
     return -1;
   }
 
-  // 3. Envoyer les données binaires
   uint32_t sent = 0;
   while (sent < file_size) {
     int n = send(sock, file_data + sent, file_size - sent, 0);
@@ -144,39 +179,43 @@ int send_file_message(int sock, const char *filename, const char *extension,
     sent += n;
   }
 
-  // 4. Envoyer le marqueur de fin
   if (send(sock, file_end, strlen(file_end), 0) != (ssize_t)strlen(file_end)) {
     return -1;
   }
 
-  return 0; // Succès
+  return 0;
 }
 
+/**
+ * @brief Reçoit un message de fichier.
+ * Lit d'abord la taille, puis le contenu complet.
+ *
+ * @param sock Socket source.
+ * @param initial_buffer Buffer contenant les premières données reçues (taille).
+ * @param initial_size Taille des données initiales.
+ * @param full_message Double pointeur pour stocker le message complet alloué.
+ * @return Taille du message reçu, ou -1 en cas d'erreur.
+ */
 int receive_file_message(int sock, unsigned char *initial_buffer,
                          int initial_size, unsigned char **full_message) {
-  // Extraire la taille du message (4 premiers bytes)
   uint32_t net_size;
   memcpy(&net_size, initial_buffer, 4);
   uint32_t message_size = ntohl(net_size);
 
-  // Vérifier que la taille est raisonnable
   if (message_size == 0 || message_size > (MAX_FILE_SIZE + 2048)) {
     return -1;
   }
 
-  // Allouer mémoire pour le message complet
   *full_message = malloc(message_size);
   if (!*full_message) {
     return -1;
   }
 
-  // Copier ce qui a déjà été reçu (après les 4 bytes de taille)
   int already = initial_size - 4;
   if (already > 0) {
     memcpy(*full_message, initial_buffer + 4, already);
   }
 
-  // Recevoir le reste du message
   uint32_t received = already;
   while (received < message_size) {
     int n = recv(sock, *full_message + received, message_size - received, 0);
@@ -188,34 +227,39 @@ int receive_file_message(int sock, unsigned char *initial_buffer,
     received += n;
   }
 
-  return message_size; // Succès
+  return message_size;
 }
 
+/**
+ * @brief Analyse un message de fichier reçu pour extraire les métadonnées.
+ *
+ * @param message Message complet reçu.
+ * @param filename Buffer pour le nom du fichier.
+ * @param file_size Pointeur pour la taille du fichier.
+ * @param extension Buffer pour l'extension.
+ * @param username Buffer pour le nom d'utilisateur (si présent).
+ * @param data_start Pointeur vers le début des données binaires.
+ * @return 1 en cas de succès, 0 sinon.
+ */
 int parse_file_message(unsigned char *message, char *filename,
                        uint32_t *file_size, char *extension, char *username,
                        unsigned char **data_start) {
-  // Parser le header - 2 formats possibles :
-  // Format client→serveur : FILE|filename|filesize|extension\n
-  // Format serveur→client : FILE|filename|filesize|extension|username\n
-
   int parsed = sscanf((char *)message, "FILE|%255[^|]|%u|%9[^|\n]|%63[^\n]",
                       filename, file_size, extension, username);
 
   if (parsed < 3) {
-    return 0; // Échec du parsing (minimum: filename, filesize, extension)
+    return 0;
   }
 
-  // Si username n'est pas présent (envoi du client), le mettre vide
   if (parsed == 3) {
     username[0] = '\0';
   }
 
-  // Trouver le début des données (après le \n du header)
   char *data_ptr = strchr((char *)message, '\n');
   if (!data_ptr) {
     return 0;
   }
 
-  *data_start = (unsigned char *)(data_ptr + 1); // Sauter le \n
-  return 1; // Succès
+  *data_start = (unsigned char *)(data_ptr + 1);
+  return 1;
 }

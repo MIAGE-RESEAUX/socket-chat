@@ -4,12 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Simple SQLite wrapper for your project
-// Provides: db_open, db_close, db_exec, db_query
+/**
+ * @file database.c
+ * @brief Gestion de la base de données SQLite.
+ *
+ * Fournit des fonctions pour ouvrir/fermer la base, exécuter des commandes,
+ * et des fonctions spécifiques pour gérer les utilisateurs, canaux et messages.
+ */
 
 static sqlite3 *db = NULL;
 
-// Open database
+/**
+ * @brief Ouvre la connexion à la base de données.
+ * @param filename Chemin du fichier de base de données.
+ * @return 1 en cas de succès, 0 sinon.
+ */
 int db_open(const char *filename) {
   if (sqlite3_open(filename, &db) != SQLITE_OK) {
     fprintf(stderr, "[DB] Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -18,14 +27,20 @@ int db_open(const char *filename) {
   return 1;
 }
 
-// Close database
+/**
+ * @brief Ferme la connexion à la base de données.
+ */
 void db_close() {
   if (db)
     sqlite3_close(db);
   db = NULL;
 }
 
-// Execute SQL without expecting rows (CREATE, INSERT, UPDATE...)
+/**
+ * @brief Exécute une commande SQL sans retour de données (INSERT, UPDATE, CREATE).
+ * @param sql La commande SQL à exécuter.
+ * @return 1 en cas de succès, 0 sinon.
+ */
 int db_exec(const char *sql) {
   char *err = NULL;
   int rc = sqlite3_exec(db, sql, NULL, NULL, &err);
@@ -38,8 +53,13 @@ int db_exec(const char *sql) {
   return 1;
 }
 
-// Callback function for SELECT results
-// Users can pass their own callback
+/**
+ * @brief Exécute une requête SQL de sélection (SELECT).
+ * @param sql La requête SQL.
+ * @param callback Fonction appelée pour chaque ligne de résultat.
+ * @param data Pointeur de données passé au callback.
+ * @return 1 en cas de succès, 0 sinon.
+ */
 int db_query(const char *sql, int (*callback)(void *, int, char **, char **),
              void *data) {
   char *err = NULL;
@@ -53,7 +73,9 @@ int db_query(const char *sql, int (*callback)(void *, int, char **, char **),
   return 1;
 }
 
-// Example default callback
+/**
+ * @brief Callback d'affichage par défaut (pour le debug).
+ */
 int print_row(void *unused, int argc, char **argv, char **colname) {
   (void)unused;
   for (int i = 0; i < argc; i++) {
@@ -63,22 +85,25 @@ int print_row(void *unused, int argc, char **argv, char **colname) {
   return 0;
 }
 
-// --- Channel & Message Implementation ---
-
 #include <time.h>
 
+/**
+ * @brief Crée un canal avec un ID unique (généré aléatoirement).
+ * @param name Nom du canal.
+ * @param type Type de canal ("public" ou "private").
+ * @param password Mot de passe (pour les canaux privés, peut être NULL).
+ * @param admin_id ID de l'utilisateur créateur (admin).
+ * @return 1 en cas de succès, 0 sinon.
+ */
 int db_create_channel(const char *name, const char *type, const char *password,
                       int admin_id) {
   char query[512];
-  // Use 'NULL' for password if it's NULL, otherwise quote it
   char pass_val[128];
   if (password)
     snprintf(pass_val, sizeof(pass_val), "'%s'", password);
   else
     strcpy(pass_val, "NULL");
 
-  // Attempt to generate a unique 4-digit ID (1000-9999)
-  // Simple retry logic
   srand(time(NULL) + admin_id);
   int max_retries = 10;
   int rc = 0;
@@ -94,12 +119,18 @@ int db_create_channel(const char *name, const char *type, const char *password,
 
     rc = db_exec(query);
     if (rc)
-      return 1; // Success
+      return 1;
   }
 
-  return 0; // Failed to find unique ID or other error
+  return 0;
 }
 
+/**
+ * @brief Liste tous les canaux publics.
+ * @param callback Fonction pour traiter les résultats.
+ * @param data Données utilisateur.
+ * @return 1 succès, 0 erreur.
+ */
 int db_list_public_channels(int (*callback)(void *, int, char **, char **),
                             void *data) {
   char query[256];
@@ -109,6 +140,13 @@ int db_list_public_channels(int (*callback)(void *, int, char **, char **),
   return db_query(query, callback, data);
 }
 
+/**
+ * @brief Liste les canaux visibles pour un utilisateur (publics + ceux dont il est admin).
+ * @param user_id ID de l'utilisateur.
+ * @param callback Fonction pour traiter les résultats.
+ * @param data Données utilisateur.
+ * @return 1 succès, 0 erreur.
+ */
 int db_list_viewable_channels(int user_id, int (*callback)(void *, int, char **, char **),
                               void *data) {
   char query[512];
@@ -118,7 +156,16 @@ int db_list_viewable_channels(int user_id, int (*callback)(void *, int, char **,
   return db_query(query, callback, data);
 }
 
-// Helper callback for getting integer ID
+/**
+ * @brief Callback SQLite pour récupérer un entier (ex: ID).
+ * Lit la première colonne de la première ligne.
+ *
+ * @param out_id Pointeur vers l'entier de sortie.
+ * @param argc Nombre de colonnes.
+ * @param argv Valeurs des colonnes.
+ * @param colname Noms des colonnes.
+ * @return 0 Toujours 0.
+ */
 static int db_get_int_cb(void *out_id, int argc, char **argv, char **colname) {
   (void)colname;
   if (argc > 0 && argv[0]) {
@@ -127,6 +174,11 @@ static int db_get_int_cb(void *out_id, int argc, char **argv, char **colname) {
   return 0;
 }
 
+/**
+ * @brief Récupère l'ID d'un canal par son nom.
+ * @param name Nom du canal.
+ * @return ID du canal ou -1 si introuvable.
+ */
 int db_get_channel_id(const char *name) {
   char query[256];
   int id = -1;
@@ -136,23 +188,47 @@ int db_get_channel_id(const char *name) {
   return id;
 }
 
-// Helper callback for fetching password
+/**
+ * @struct ChannelInfo
+ * @brief Structure helper pour stocker les infos d'un canal (type et admin).
+ */
+typedef struct {
+  char type[16]; /**< Type du canal ("public", "private"). */
+  int admin_id;  /**< ID de l'administrateur. */
+} ChannelInfo;
 
-// Quick local callback for string
-
-
-typedef struct { char type[16]; int admin_id; } ChannelInfo;
-
+/**
+ * @brief Callback SQLite pour remplir une structure ChannelInfo.
+ * Attend 2 colonnes : type, admin_id.
+ *
+ * @param out Pointeur vers struct ChannelInfo.
+ * @param argc Nombre de colonnes.
+ * @param argv Valeurs des colonnes.
+ * @param col Pointeur vers noms des colonnes (inutilisé).
+ * @return 0 Toujours 0.
+ */
 static int get_info_cb(void *out, int argc, char **argv, char **col) {
   (void)col;
-  ChannelInfo *i = (ChannelInfo*)out;
+  ChannelInfo *i = (ChannelInfo *)out;
   if (argc >= 2) {
-      if (argv[0]) strncpy(i->type, argv[0], 15);
-      if (argv[1]) i->admin_id = atoi(argv[1]);
+    if (argv[0])
+      strncpy(i->type, argv[0], 15);
+    if (argv[1])
+      i->admin_id = atoi(argv[1]);
   }
   return 0;
 }
 
+/**
+ * @brief Callback SQLite pour récupérer une simple chaîne.
+ * Copie la première colonne dans le buffer de sortie.
+ *
+ * @param out Buffer de sortie (char*).
+ * @param argc Nombre de colonnes.
+ * @param argv Valeurs des colonnes.
+ * @param col Noms des colonnes.
+ * @return 0 Toujours 0.
+ */
 static int get_str_cb_local(void *out, int argc, char **argv, char **col) {
   (void)col;
   if (argc > 0 && argv[0])
@@ -160,39 +236,44 @@ static int get_str_cb_local(void *out, int argc, char **argv, char **col) {
   return 0;
 }
 
+/**
+ * @brief Valide l'accès à un canal (mot de passe ou droits admin/public).
+ * @param channel_id ID du canal.
+ * @param password Mot de passe fourni (peut être NULL).
+ * @param user_id ID de l'utilisateur demandeur.
+ * @return true si accès autorisé, false sinon.
+ */
 bool db_validate_channel_password(int channel_id, const char *password, int user_id) {
-  // 1. Check type and admin.
-  // 2. If public OR user is admin, return true.
-  // 3. If private, check password.
   char query[256];
   ChannelInfo info = { .type="", .admin_id=-1 };
   
   snprintf(query, sizeof(query), "SELECT type, admin_id FROM channel WHERE id=%d;", channel_id);
   db_query(query, get_info_cb, &info);
 
-  // If public or user is admin, allow
   if (strcmp(info.type, "public") == 0) return true;
   if (info.admin_id == user_id) return true;
 
-  // It is private and not admin, check password
   char stored_pass[64] = {0};
   snprintf(query, sizeof(query), "SELECT password FROM channel WHERE id=%d;", channel_id);
   
   db_query(query, get_str_cb_local, stored_pass);
 
-  // If no password set for this private channel, allow access
   if (strlen(stored_pass) == 0) return true;
 
-  // Otherwise, match password
   if (password && strcmp(stored_pass, password) == 0) return true;
 
   return false;
 }
 
+/**
+ * @brief Sauvegarde un message dans la base de données.
+ * @param user_id ID de l'auteur.
+ * @param channel_id ID du canal.
+ * @param content Contenu du message.
+ * @return 1 succès, 0 erreur.
+ */
 int db_save_message(int user_id, int channel_id, const char *content) {
   char query[1024];
-  // Simple sanitization should be done, but for this exercise we assume basic
-  // content
   snprintf(query, sizeof(query),
            "INSERT INTO message (user_id, channel_id, content) VALUES (%d, %d, "
            "'%s');",
@@ -200,11 +281,18 @@ int db_save_message(int user_id, int channel_id, const char *content) {
   return db_exec(query);
 }
 
+/**
+ * @brief Récupère l'historique des messages d'un canal.
+ * @param channel_id ID du canal.
+ * @param limit Nombre max de messages.
+ * @param callback Fonction pour traiter chaque message.
+ * @param data Données utilisateur.
+ * @return 1 succès, 0 erreur.
+ */
 int db_get_history(int channel_id, int limit,
                    int (*callback)(void *, int, char **, char **), void *data) {
   char query[512];
-  int l = (limit > 0) ? limit : 50; // default limit
-  // JOIN to get username
+  int l = (limit > 0) ? limit : 50;
   snprintf(query, sizeof(query),
            "SELECT u.username, m.content, m.timestamp "
            "FROM message m "
@@ -217,6 +305,11 @@ int db_get_history(int channel_id, int limit,
   return db_query(query, callback, data);
 }
 
+/**
+ * @brief Récupère l'ID d'un utilisateur par son pseudo.
+ * @param username Pseudo de l'utilisateur.
+ * @return ID ou -1 si non trouvé.
+ */
 int db_get_user_id(const char *username) {
   char query[256];
   int id = -1;

@@ -1,3 +1,15 @@
+/**
+ * @file server.c
+ * @brief Serveur principal pour l'application Chat-Socket.
+ *
+ * Ce fichier contient la logique principale du serveur, y compris :
+ * - La gestion des connexions clients (sockets).
+ * - L'authentification des utilisateurs.
+ * - La gestion des canaux de discussion.
+ * - Le routage des messages et des fichiers.
+ * - L'interaction avec la base de données.
+ */
+
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
@@ -11,28 +23,33 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-// Inclusion de vos modules (assurez-vous qu'ils existent)
 #include "auth/auth.h"
 #include "database/database.h"
 #include "file_transfer/file_transfer.h"
 
-#define PORT 8080
-#define BUFFER_SIZE 1024
-#define MAX_CLIENTS 100
+#define PORT 8080         /**< Port d'écoute par défaut du serveur */
+#define BUFFER_SIZE 1024  /**< Taille du buffer pour les messages */
+#define MAX_CLIENTS 100   /**< Nombre maximum de clients connectés simultanément */
 
-// Structure pour représenter un client et son état
+/**
+ * @brief Structure représentant le contexte d'un client connecté.
+ */
 typedef struct {
-  int socket;
-  bool authenticated; // false = phase auth, true = phase chat
-  char username[64];
-  int channel_id; // Current channel ID
+  int socket;           /**< Descripteur de fichier du socket client */
+  bool authenticated;   /**< État d'authentification (true = connecté, false = invité) */
+  char username[64];    /**< Nom d'utilisateur (si authentifié) */
+  int channel_id;       /**< ID du canal actuel (0 = aucun, 1 = général) */
 } ClientContext;
 
-// Tableau global des clients
+/**
+ * @brief Tableau global stockant l'état de tous les clients potentiels.
+ */
 ClientContext clients[MAX_CLIENTS];
 
-// --- Fonctions de gestion de la liste des clients ---
-
+/**
+ * @brief Initialise le tableau des clients au démarrage.
+ * Met tous les sockets à 0 et les états à "non authentifié".
+ */
 void init_clients() {
   for (int i = 0; i < MAX_CLIENTS; i++) {
     clients[i].socket = 0;
@@ -42,18 +59,31 @@ void init_clients() {
   }
 }
 
+/**
+ * @brief Ajoute un nouveau client au tableau.
+ * Cherche un emplacement libre dans le tableau `clients`.
+ *
+ * @param sock Le socket du nouveau client.
+ * @return L'index du client dans le tableau, ou -1 si le serveur est plein.
+ */
 int ajouter_client(int sock) {
   for (int i = 0; i < MAX_CLIENTS; i++) {
     if (clients[i].socket == 0) {
       clients[i].socket = sock;
       clients[i].authenticated = false; // Par défaut, non authentifié
-      clients[i].channel_id = 1;        // Default to 'general' (ID 1)
+      clients[i].channel_id = 1;        // Par défaut : canal 'général' (ID 1)
       return i;
     }
   }
   return -1;
 }
 
+/**
+ * @brief Supprime un client et libère son emplacement.
+ * Ferme le socket associé et réinitialise la structure ClientContext.
+ *
+ * @param index L'index du client à supprimer.
+ */
 void supprimer_client(int index) {
   if (index >= 0 && index < MAX_CLIENTS) {
     close(clients[index].socket);
@@ -64,25 +94,31 @@ void supprimer_client(int index) {
   }
 }
 
-// --- Fonctions Réseau ---
-
+/**
+ * @brief Envoie un message texte simple à un client spécifique.
+ *
+ * @param sock Le socket du destinataire.
+ * @param msg Le message à envoyer (doit être null-terminated).
+ */
 void send_to_client(int sock, const char *msg) {
   send(sock, msg, strlen(msg), 0);
 }
 
-// Diffuse un message à tous les AUTRES clients AUTHENTIFIÉS
+/**
+ * @brief Diffuse un message à tous les autres clients du même canal.
+ *
+ * @param message Le contenu du message.
+ * @param sender_index L'index de l'expéditeur (pour ne pas lui renvoyer le message).
+ */
 void broadcast_message(char *message, int sender_index) {
   char formatted_msg[BUFFER_SIZE + 70];
 
-  // Formatage : [User] Message
   snprintf(formatted_msg, sizeof(formatted_msg), "[%s] %s",
            clients[sender_index].username, message);
 
   int current_channel = clients[sender_index].channel_id;
 
   for (int i = 0; i < MAX_CLIENTS; i++) {
-    // On envoie seulement si le socket existe, n'est pas l'expéditeur, est
-    // authentifié, et est dans le même canal
     if (clients[i].socket != 0 && i != sender_index &&
         clients[i].authenticated && clients[i].channel_id == current_channel) {
       send(clients[i].socket, formatted_msg, strlen(formatted_msg), 0);
@@ -90,30 +126,33 @@ void broadcast_message(char *message, int sender_index) {
   }
 }
 
-// FILE_TRANSFER: début - Broadcast de fichiers
-// Diffuse un fichier à tous les AUTRES clients AUTHENTIFIÉS du canal
+/**
+ * @brief Diffuse un fichier binaire à tous les autres clients du canal.
+ * Utilise un protocole spécifique avec un header et une taille préfixée.
+ *
+ * @param filename Nom du fichier.
+ * @param extension Extension du fichier.
+ * @param file_data Pointeur vers les données brutes du fichier.
+ * @param file_size Taille du fichier en octets.
+ * @param sender_index L'index de l'expéditeur.
+ */
 void broadcast_file(const char *filename, const char *extension,
                     unsigned char *file_data, uint32_t file_size,
                     int sender_index) {
   char header[BUFFER_SIZE];
   const char *file_end = "FILE_END\n";
 
-  // Préparer le header avec le nom de l'expéditeur
   snprintf(header, sizeof(header), "FILE|%s|%u|%s|%s\n", filename, file_size,
            extension, clients[sender_index].username);
 
-  // Calculer taille totale pour length-prefix
   uint32_t total_size = strlen(header) + file_size + strlen(file_end);
   uint32_t net_size = htonl(total_size);
 
   int current_channel = clients[sender_index].channel_id;
-
-  // Broadcaster à tous les clients du canal (sauf expéditeur)
   for (int i = 0; i < MAX_CLIENTS; i++) {
     if (clients[i].socket != 0 && i != sender_index &&
         clients[i].authenticated && clients[i].channel_id == current_channel) {
 
-      // Envoyer: taille + header + données + FILE_END
       send(clients[i].socket, &net_size, sizeof(net_size), 0);
       send(clients[i].socket, header, strlen(header), 0);
       send(clients[i].socket, file_data, file_size, 0);
@@ -124,35 +163,37 @@ void broadcast_file(const char *filename, const char *extension,
   printf("[FILE_TRANSFER] %s a broadcasté %s (%u bytes) dans le canal %d\n",
          clients[sender_index].username, filename, file_size, current_channel);
 }
-// FILE_TRANSFER: fin
 
-// --- Callbacks Base de Données ---
-
+/**
+ * @brief Callback pour l'envoi de l'historique des messages.
+ * Utilisé par `db_get_history`.
+ */
 int send_hist_cb(void *ctx, int argc, char **argv, char **col) {
-  (void)col; // Silence unused parameter warning
+  (void)col;
   int index = *(int *)ctx;
   if (argc >= 3) {
     char hist_msg[BUFFER_SIZE];
-    // argv[0]=username, argv[1]=content, argv[2]=timestamp
-    // Format: [TIMESTAMP] [User] Message
     snprintf(hist_msg, sizeof(hist_msg), "[%s] [%s] %s\n", argv[2], argv[0], argv[1]);
     if (clients[index].socket > 0) {
       send(clients[index].socket, hist_msg, strlen(hist_msg), 0);
-      usleep(1000); // Slight delay to ensure order/buffering
+      usleep(1000);
     }
   }
   return 0;
 }
 
-// --- Logique Métier ---
-
-// Traitement de l'authentification (LOGIN/SIGNUP)
+/**
+ * @brief Gère l'authentification d'un client (LOGIN ou SIGNUP).
+ * Parse la commande reçue et interroge la base de données.
+ *
+ * @param index L'index du client dans le tableau `clients`.
+ * @param buffer Le message reçu contenant la commande d'auth.
+ */
 void traiter_auth(int index, char *buffer) {
   char command[16], user[64], pass[64];
   bool success = false;
   int socket = clients[index].socket;
 
-  // Parsing de la commande
   if (sscanf(buffer, "%15s %63s %63s", command, user, pass) != 3) {
     send_to_client(
         socket,
@@ -166,8 +207,6 @@ void traiter_auth(int index, char *buffer) {
       send_to_client(socket, "ECHEC_AUTH: Login ou mdp incorrect.\n");
   } else if (strcmp(command, "SIGNUP") == 0) {
     if (auth_signup(user, pass)) {
-      // Auto-login enabling: We do NOT send a separate success message here.
-      // We let the unified success block below send SUCCES_SESSION.
       success = true; 
     } else {
       send_to_client(socket,
@@ -179,33 +218,38 @@ void traiter_auth(int index, char *buffer) {
     return;
   }
 
-  // Si authentification réussie
   if (success) {
     clients[index].authenticated = true;
     strncpy(clients[index].username, user, 63);
-    clients[index].channel_id = 1; // Force general channel on login
+    clients[index].channel_id = 1;
     printf("[AUTH] %s connecté (Socket %d)\n", user, socket);
 
-    // Ce message déclenche le passage en mode chat côté client
-    // We can customize it slightly if we want, or just stick to standard.
     if (strcmp(command, "SIGNUP") == 0) {
          send_to_client(socket, "SUCCES_SESSION: Compte créé. Bienvenue !\n");
     } else {
          send_to_client(socket, "SUCCES_SESSION: Bienvenue sur le chat. Canal: Global\n");
     }
-
-    // Send history callback
-    // db_get_history(1, 50, send_hist_cb, &index);
-    // send_to_client(socket, "HISTORY_END\n");
   }
 }
 
-// Callback for listing channels
+/**
+ * @brief Callback utilisé pour envoyer la liste des canaux au client.
+ *
+ * Cette fonction est appelée pour chaque ligne retournée par la requête SQL
+ * lors de l'exécution de la commande /list. Elle formate les informations
+ * du canal (Nom, ID, Type) et les envoie au socket client.
+ *
+ * @param ctx Contexte (ici, pointeur vers le socket client `int *`).
+ * @param argc Nombre de colonnes dans le résultat.
+ * @param argv Tableau des valeurs (ex: argv[0]=Nom, argv[1]=ID, argv[2]=Type).
+ * @param col Tableau des noms de colonnes (non utilisé).
+ * @return 0 pour continuer l'itération.
+ */
 int send_channel_list_cb(void *ctx, int argc, char **argv, char **col) {
-  (void)col; // Silence unused parameter warning
+  (void)col;
   int socket = *(int *)ctx;
   
-  if (argc >= 3) { // Expecting: Name, ID, Type
+  if (argc >= 3) {
     char msg[256];
     char *name = argv[0];
     char *id = argv[1];
@@ -217,7 +261,7 @@ int send_channel_list_cb(void *ctx, int argc, char **argv, char **col) {
         snprintf(msg, sizeof(msg), "- %s (ID: %s)\n", name, id);
     }
     send(socket, msg, strlen(msg), 0);
-  } else if (argc >= 2) { // Fallback
+  } else if (argc >= 2) {
     char msg[256];
     snprintf(msg, sizeof(msg), "- %s (ID: %s)\n", argv[0], argv[1]);
     send(socket, msg, strlen(msg), 0);
@@ -225,7 +269,12 @@ int send_channel_list_cb(void *ctx, int argc, char **argv, char **col) {
   return 0;
 }
 
-// Traitement principal d'un message reçu
+/**
+ * @brief Traite les données reçues d'un client.
+ * Gère les commandes (/join, /create, etc.) et les messages standards.
+ *
+ * @param index L'index du client.
+ */
 void traiter_donnees_client(int index) {
   char buffer[BUFFER_SIZE];
   int sock = clients[index].socket;
@@ -233,56 +282,41 @@ void traiter_donnees_client(int index) {
   memset(buffer, 0, BUFFER_SIZE);
   int n = recv(sock, buffer, BUFFER_SIZE - 1, 0);
 
-  // Déconnexion
   if (n <= 0) {
     printf("Client déconnecté (Socket %d)\n", sock);
     supprimer_client(index);
     return;
   }
 
-  buffer[n] = '\0'; // Assurer la fin de chaîne
+  buffer[n] = '\0';
 
-  // Commande de sortie
   if (strncmp(buffer, "/quit", 5) == 0) {
     printf("Client %s a quitté.\n", clients[index].username);
     supprimer_client(index);
     return;
   }
 
-  // ROUTAGE selon l'état du client
   if (!clients[index].authenticated) {
-    // Cas 1: Pas encore connecté -> On tente le LOGIN/SIGNUP
     traiter_auth(index, buffer);
   } else {
-    // Cas 2: Déjà connecté
-
-    // FILE_TRANSFER: début - Réception avec length-prefix
     if (n >= 4) {
-      // Vérifier si c'est un transfert de fichier
       uint32_t potential_size;
       memcpy(&potential_size, buffer, 4);
       uint32_t message_size = ntohl(potential_size);
 
-      // Si taille raisonnable, c'est probablement un fichier
       if (message_size > 0 && message_size < (MAX_FILE_SIZE + 2048)) {
         unsigned char *full_message = NULL;
 
-        // Recevoir le message complet avec le module
         int received_size =
             receive_file_message(sock, (unsigned char *)buffer, n, &full_message);
 
         if (received_size > 0) {
-          // Parser le message
           char filename[256], extension[10], username[64];
           uint32_t file_size;
           unsigned char *data_start = NULL;
 
           if (parse_file_message(full_message, filename, &file_size, extension,
                                 username, &data_start)) {
-
-
-
-            // Valider l'extension
             if (!validate_file_extension(extension)) {
               send_to_client(sock,
                              "Erreur: Type de fichier non autorisé (jpg, jpeg, "
@@ -292,7 +326,6 @@ void traiter_donnees_client(int index) {
               return;
             }
 
-            // Valider la taille
             if (!validate_file_size(file_size)) {
               send_to_client(sock, "Erreur: Fichier trop gros (max 10 MB).\n");
               free(full_message);
@@ -302,7 +335,6 @@ void traiter_donnees_client(int index) {
             printf("[FILE_TRANSFER] Reçu %s (%u bytes) de %s\n", filename,
                    file_size, clients[index].username);
 
-            // Broadcaster le fichier
             broadcast_file(filename, extension, data_start, file_size, index);
           }
 
@@ -314,9 +346,6 @@ void traiter_donnees_client(int index) {
         return;
       }
     }
-    // FILE_TRANSFER: fin
-
-    // Commandes Channel
     if (buffer[0] == '/') {
       char cmd[32], arg1[64], arg2[64], arg3[64];
       int args = sscanf(buffer, "%31s %63s %63s %63s", cmd, arg1, arg2, arg3);
@@ -341,24 +370,18 @@ void traiter_donnees_client(int index) {
         if (args < 2) {
           send_to_client(sock, "Usage: /join [id_canal] [mdp (si private)]\n");
         } else {
-          int cid = atoi(arg1); // Interpret arg1 as ID
+          int cid = atoi(arg1);
           if (cid <= 0) {
             send_to_client(sock, "ID de canal invalide.\n");
           } else {
             char *pass = (args >= 3) ? arg2 : NULL;
             int uid = db_get_user_id(clients[index].username);
-            // Validate directly with ID and User ID
             if (db_validate_channel_password(cid, pass, uid)) {
               clients[index].channel_id = cid;
               char join_msg[128];
-              // Note: We don't have the name easily here without another DB call.
-              // We will send ID and let client handle or server sends simple confirmation.
-              // Ideally: "JOIN_SUCCESS [ID]"
+
               snprintf(join_msg, sizeof(join_msg), "JOIN_SUCCESS %d\n", cid);
               send_to_client(sock, join_msg);
-
-              // db_get_history(cid, 50, send_hist_cb, &index);
-              // send_to_client(sock, "HISTORY_END\n");
 
             } else {
               send_to_client(sock,
@@ -367,7 +390,7 @@ void traiter_donnees_client(int index) {
           }
         }
       } else if (strcmp(cmd, "/leave") == 0) {
-        clients[index].channel_id = 1; // Retour general
+        clients[index].channel_id = 1;
         send_to_client(sock, "Retour au canal général.\n");
       } else if (strcmp(cmd, "/delete") == 0) {
         send_to_client(
@@ -397,11 +420,9 @@ void traiter_donnees_client(int index) {
       }
 
     } else {
-      // Message standard
       printf("[CHAT] (%d) %s: %s\n", clients[index].channel_id,
              clients[index].username, buffer);
 
-      // Save to DB
       int uid = db_get_user_id(clients[index].username);
       db_save_message(uid, clients[index].channel_id, buffer);
 
@@ -410,18 +431,26 @@ void traiter_donnees_client(int index) {
   }
 }
 
+/**
+ * @brief Point d'entrée principal du serveur.
+ *
+ * Initialise la base de données, configure le socket serveur,
+ * et lance la boucle principale (select) pour gérer les événements réseau.
+ *
+ * @param argc Nombre d'arguments.
+ * @param argv Arguments (argv[1] = port optionnel).
+ * @return 0 en cas de succès (ne retourne jamais en pratique).
+ */
 int main(int argc, char **argv) {
   int server_fd, new_socket, max_sd;
   struct sockaddr_in address;
-  fd_set readfds; // Ensemble des descripteurs de fichiers à lire
+  fd_set readfds;
 
-  // Gestion du port via argument ou défaut
   int port = PORT;
   if (argc > 1) {
     port = atoi(argv[1]);
   }
 
-  // 1. Initialisation BDD
   printf("Ouverture de la DB: %s\n", DATABASE_PATH);
   if (!db_open(DATABASE_PATH)) {
     fprintf(stderr,
@@ -431,13 +460,11 @@ int main(int argc, char **argv) {
 
   init_clients();
 
-  // 2. Création du Socket Serveur
   if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
     perror("Socket failed");
     exit(1);
   }
 
-  // Options pour réutiliser le port rapidement
   int opt = 1;
   setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
@@ -458,13 +485,11 @@ int main(int argc, char **argv) {
   printf("--- Serveur Multi-Client Auth+Chat démarré sur le port %d ---\n",
          port);
 
-  // 3. Boucle Principale
   while (1) {
     FD_ZERO(&readfds);
     FD_SET(server_fd, &readfds);
     max_sd = server_fd;
 
-    // Ajout des sockets clients au set
     for (int i = 0; i < MAX_CLIENTS; i++) {
       int sd = clients[i].socket;
       if (sd > 0)
@@ -473,14 +498,12 @@ int main(int argc, char **argv) {
         max_sd = sd;
     }
 
-    // Attente d'activité (Select)
     int activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
 
     if ((activity < 0) && (errno != EINTR)) {
       perror("Select error");
     }
 
-    // A. Nouvelle connexion entrante
     if (FD_ISSET(server_fd, &readfds)) {
       socklen_t addrlen = sizeof(address);
       if ((new_socket =
@@ -497,7 +520,6 @@ int main(int argc, char **argv) {
       }
     }
 
-    // B. Activité sur un client existant (Message ou Auth)
     for (int i = 0; i < MAX_CLIENTS; i++) {
       int sd = clients[i].socket;
       if (sd > 0 && FD_ISSET(sd, &readfds)) {
