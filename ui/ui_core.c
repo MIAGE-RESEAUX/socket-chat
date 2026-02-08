@@ -26,7 +26,7 @@ void ui_show_banner() {
          "\\______/   \\______||__|\\__\\ |_______|    |__|     \n");
   printf("\n" C_RESET);
   printf("                                      " C_ITALIC
-         "v1.0 - Connected Edition" C_RESET "\n\n");
+         "v2.0 - Canaux" C_RESET "\n\n");
 }
 
 void ui_set_raw_mode(int enable) {

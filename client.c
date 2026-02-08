@@ -1,4 +1,6 @@
 #include "ui/ui_shared.h"
+#include "file_transfer/file_transfer.h"
+#include "images/renderer.h"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -9,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -106,19 +109,52 @@ void phase_chat(int sock) {
     if (FD_ISSET(sock, &sockets_actifs)) {
       memset(buffer, 0, BUFFER_SIZE);
       int n = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+      
       if (n <= 0) {
         ui_print_pretty_msg("!!! Serveur déconnecté.");
         break;
       }
-      if (n <= 0) {
-        ui_print_pretty_msg("!!! Serveur déconnecté.");
-        break;
+
+      // --- CHECK FILE TRANSFER (Develop Logic) ---
+      if (n >= 4) {
+        uint32_t potential_size;
+        memcpy(&potential_size, buffer, 4);
+        uint32_t message_size = ntohl(potential_size);
+
+        if (message_size > 50 && message_size < (MAX_FILE_SIZE + 2048)) {
+           unsigned char *full_message = NULL;
+           int received_size = receive_file_message(sock, (unsigned char *)buffer, n, &full_message);
+
+           if (received_size > 0) {
+             char filename[256], extension[10], username[64];
+             uint32_t file_size;
+             unsigned char *data_start = NULL;
+
+             if (parse_file_message(full_message, filename, &file_size, extension, username, &data_start)) {
+               if (save_received_file(filename, data_start, file_size)) {
+                 char msg[512];
+                 snprintf(msg, sizeof(msg), "\n[%s] 📎 Fichier reçu: %s (%u octets)\n", username, filename, file_size);
+                 ui_print_pretty_msg(msg);
+               } else {
+                 ui_print_pretty_msg("[Erreur] Échec sauvegarde\n");
+               }
+             }
+             free(full_message);
+           } else {
+             ui_print_pretty_msg("[Erreur] Réception interrompue\n");
+           }
+           // IMPORTANT: If handled as file, continue loop to skip text processing
+           continue; 
+        }
       }
+      
+      // --- STANDARD TEXT PROCESSING (V2 Logic) ---
       buffer[n] = '\0';
 
       // Process buffer line by line to handle concatenated messages
       char *line = strtok(buffer, "\n");
       static int current_channel_id = 1; // Track current channel
+
 
       while (line != NULL) {
           // Check for Special Commands
@@ -126,19 +162,36 @@ void phase_chat(int sock) {
               int cid = 0;
               sscanf(line, "JOIN_SUCCESS %d", &cid);
               current_channel_id = cid;
+              current_channel_id = cid;
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "Retour au canal", 15) == 0) {
               current_channel_id = 1;
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "HISTORY_END", 11) == 0) {
-              // History loaded. Clear screen and show header
+              // History logic removed for now
               ui_print_channel_header(current_channel_id);
           } else if (strncmp(line, "SUCCES_SESSION", 14) == 0) {
               // Reset channel to 1 on new session
               current_channel_id = 1;
+              // Reset channel to 1 on new session
+              current_channel_id = 1;
               ui_print_pretty_msg(line);
           } else {
-              ui_print_pretty_msg(line);
+              // --- IMAGE VISUALIZATION CHECK ---
+              // --- IMAGE VISUALIZATION CHECK ---
+              char *img_tag = strstr(line, "[IMG] ");
+              if (img_tag) {
+                  char *path = img_tag + 6;
+                  path[strcspn(path, "\r")] = 0; // Clean potential carriage return
+                  
+                  // Clear prompt for clean render
+                  printf("\r\033[K"); 
+                  fflush(stdout);
+                  img_render_file(path, 80);
+                  ui_refresh_prompt();
+              } else {
+                  ui_print_pretty_msg(line);
+              }
           }
           
           line = strtok(NULL, "\n");
@@ -175,31 +228,62 @@ void phase_chat(int sock) {
             ui_reset_input();
             ui_refresh_prompt(); // Clear line and reset prompt
 
-            if (strcmp(temp_msg, "/commandes") == 0) {
+            // --- COMMAND PROCESSING ---
+            if (strncmp(temp_msg, "/sendfile ", 10) == 0) {
+              char *filepath = temp_msg + 10;
+              char filename[256];
+              char extension[10];
+              uint32_t file_size;
+
+              unsigned char *file_data = read_local_file(filepath, &file_size);
+              if (!file_data) {
+                ui_print_pretty_msg("[Erreur] Impossible de lire le fichier (chemin invalide ou taille > 10MB)\n");
+              } else {
+                extract_filename_from_path(filepath, filename);
+                get_file_extension(filename, extension, sizeof(extension));
+
+                if (send_file_message(sock, filename, extension, file_data, file_size) == 0) {
+                  char msg[BUFFER_SIZE];
+                  snprintf(msg, sizeof(msg), "[Moi] 📎 Fichier envoyé: %s (%u octets)\n", filename, file_size);
+                  ui_print_pretty_msg(msg);
+                } else {
+                  ui_print_pretty_msg("[Erreur] Échec d'envoi\n");
+                }
+                free(file_data);
+              }
+            } else if (strcmp(temp_msg, "/commandes") == 0) {
               ui_print_help();
+            } else if (strncmp(temp_msg, "/image ", 7) == 0) {
+               char *path = temp_msg + 7;
+               path[strcspn(path, "\n")] = 0;
+               
+               char info_msg[256];
+               snprintf(info_msg, sizeof(info_msg), "[INFO] Affichage de l'image: %s", path);
+               ui_print_pretty_msg(info_msg);
+               
+               printf("\r\033[K");
+               fflush(stdout);
+               img_render_file(path, 80);
+               ui_refresh_prompt();
+               
+               // Send signal to others
+               char send_buf[BUFFER_SIZE];
+               snprintf(send_buf, sizeof(send_buf), "[IMG] %s", path);
+               send(sock, send_buf, strlen(send_buf), 0);
+               
             } else if (strcmp(temp_msg, "/quit") == 0) {
               break;
             } else if (strcmp(temp_msg, "/leave") == 0) {
-                // Special handling for leave to clear screen locally
                 send(sock, temp_msg, strlen(temp_msg), 0);
-                // We will rely on server response or local heuristic?
-                // Server sends "Retour au canal général."
-                // Let's just send it.
             } else {
-              // Local echo done by server broadcast usually?
-              // Code used to do: ui_print_pretty_msg("[Moi] ...");
-              // We should keep that for immediate feedback?
-              // Update: The previous code printed "[Moi]" locally.
-              // We should continue doing that.
-              
+              // Standard message
               char my_formatted_msg[BUFFER_SIZE + 10];
               snprintf(my_formatted_msg, sizeof(my_formatted_msg), "[Moi] %s", temp_msg);
               ui_print_pretty_msg(my_formatted_msg);
-
+              
               send(sock, temp_msg, strlen(temp_msg), 0);
             }
           } else {
-             // Saisie vide, on fait rien ou juste refresh
              ui_refresh_prompt();
           }
         } else if (ch == 127 || ch == '\b') { // Backspace

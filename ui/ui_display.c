@@ -73,6 +73,8 @@ void ui_print_help() {
   printf(" %-40s : Lister les canaux\n", "/list");
   printf(" %-40s : Utilisateurs connectés\n", "/users");
   printf(" %-40s : Quitter le canal\n", "/leave");
+  printf(" %-40s : Envoyer une image\n", "/image [chemin]");
+  printf(" %-40s : Envoyer un fichier\n", "/sendfile [chemin]");
   printf(" %-40s : Historique\n", "Flèches Haut/Bas");
   printf(" %-40s : Navigation curseur\n", "Flèches Gauche/Droite");
   

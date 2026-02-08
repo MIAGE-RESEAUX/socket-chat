@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -13,6 +14,7 @@
 // Inclusion de vos modules (assurez-vous qu'ils existent)
 #include "auth/auth.h"
 #include "database/database.h"
+#include "file_transfer/file_transfer.h"
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -88,6 +90,42 @@ void broadcast_message(char *message, int sender_index) {
   }
 }
 
+// FILE_TRANSFER: début - Broadcast de fichiers
+// Diffuse un fichier à tous les AUTRES clients AUTHENTIFIÉS du canal
+void broadcast_file(const char *filename, const char *extension,
+                    unsigned char *file_data, uint32_t file_size,
+                    int sender_index) {
+  char header[BUFFER_SIZE];
+  const char *file_end = "FILE_END\n";
+
+  // Préparer le header avec le nom de l'expéditeur
+  snprintf(header, sizeof(header), "FILE|%s|%u|%s|%s\n", filename, file_size,
+           extension, clients[sender_index].username);
+
+  // Calculer taille totale pour length-prefix
+  uint32_t total_size = strlen(header) + file_size + strlen(file_end);
+  uint32_t net_size = htonl(total_size);
+
+  int current_channel = clients[sender_index].channel_id;
+
+  // Broadcaster à tous les clients du canal (sauf expéditeur)
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clients[i].socket != 0 && i != sender_index &&
+        clients[i].authenticated && clients[i].channel_id == current_channel) {
+
+      // Envoyer: taille + header + données + FILE_END
+      send(clients[i].socket, &net_size, sizeof(net_size), 0);
+      send(clients[i].socket, header, strlen(header), 0);
+      send(clients[i].socket, file_data, file_size, 0);
+      send(clients[i].socket, file_end, strlen(file_end), 0);
+    }
+  }
+
+  printf("[FILE_TRANSFER] %s a broadcasté %s (%u bytes) dans le canal %d\n",
+         clients[sender_index].username, filename, file_size, current_channel);
+}
+// FILE_TRANSFER: fin
+
 // --- Callbacks Base de Données ---
 
 int send_hist_cb(void *ctx, int argc, char **argv, char **col) {
@@ -157,8 +195,8 @@ void traiter_auth(int index, char *buffer) {
     }
 
     // Send history callback
-    db_get_history(1, 50, send_hist_cb, &index);
-    send_to_client(socket, "HISTORY_END\n");
+    // db_get_history(1, 50, send_hist_cb, &index);
+    // send_to_client(socket, "HISTORY_END\n");
   }
 }
 
@@ -218,6 +256,66 @@ void traiter_donnees_client(int index) {
   } else {
     // Cas 2: Déjà connecté
 
+    // FILE_TRANSFER: début - Réception avec length-prefix
+    if (n >= 4) {
+      // Vérifier si c'est un transfert de fichier
+      uint32_t potential_size;
+      memcpy(&potential_size, buffer, 4);
+      uint32_t message_size = ntohl(potential_size);
+
+      // Si taille raisonnable, c'est probablement un fichier
+      if (message_size > 0 && message_size < (MAX_FILE_SIZE + 2048)) {
+        unsigned char *full_message = NULL;
+
+        // Recevoir le message complet avec le module
+        int received_size =
+            receive_file_message(sock, (unsigned char *)buffer, n, &full_message);
+
+        if (received_size > 0) {
+          // Parser le message
+          char filename[256], extension[10], username[64];
+          uint32_t file_size;
+          unsigned char *data_start = NULL;
+
+          if (parse_file_message(full_message, filename, &file_size, extension,
+                                username, &data_start)) {
+
+
+
+            // Valider l'extension
+            if (!validate_file_extension(extension)) {
+              send_to_client(sock,
+                             "Erreur: Type de fichier non autorisé (jpg, jpeg, "
+                             "png, pdf, txt uniquement).\n");
+
+              free(full_message);
+              return;
+            }
+
+            // Valider la taille
+            if (!validate_file_size(file_size)) {
+              send_to_client(sock, "Erreur: Fichier trop gros (max 10 MB).\n");
+              free(full_message);
+              return;
+            }
+
+            printf("[FILE_TRANSFER] Reçu %s (%u bytes) de %s\n", filename,
+                   file_size, clients[index].username);
+
+            // Broadcaster le fichier
+            broadcast_file(filename, extension, data_start, file_size, index);
+          }
+
+          free(full_message);
+        } else {
+          send_to_client(sock, "Erreur: Réception fichier échouée.\n");
+          if (full_message) free(full_message);
+        }
+        return;
+      }
+    }
+    // FILE_TRANSFER: fin
+
     // Commandes Channel
     if (buffer[0] == '/') {
       char cmd[32], arg1[64], arg2[64], arg3[64];
@@ -259,8 +357,8 @@ void traiter_donnees_client(int index) {
               snprintf(join_msg, sizeof(join_msg), "JOIN_SUCCESS %d\n", cid);
               send_to_client(sock, join_msg);
 
-              db_get_history(cid, 50, send_hist_cb, &index);
-              send_to_client(sock, "HISTORY_END\n");
+              // db_get_history(cid, 50, send_hist_cb, &index);
+              // send_to_client(sock, "HISTORY_END\n");
 
             } else {
               send_to_client(sock,
