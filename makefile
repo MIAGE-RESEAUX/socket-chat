@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -I./database -I./auth -I./images -I./file_transfer -I/opt/homebrew/include
-LDFLAGS = -lsqlite3 -L/opt/homebrew/lib -ldl -lpthread
+LDFLAGS = -lsqlite3 -L/opt/homebrew/lib -ldl -lpthread -lm
 
 
 # Common source files
