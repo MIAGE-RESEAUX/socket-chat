@@ -38,6 +38,8 @@ void erreur(const char *msg) {
   exit(1);
 }
 
+void trim_newline(char *str);
+
 /**
  * @brief Établit une connexion TCP avec le serveur.
  * Résout le nom d'hôte et tente de se connecter au port spécifié.
@@ -102,8 +104,9 @@ void phase_authentification(int sock) {
       char cmd[10], u[64], p[64];
       if (sscanf(last_cmd, "%s %s %s", cmd, u, p) >= 2) {
           strncpy(current_username, u, 63);
+          trim_newline(current_username); 
       }
-      printf(C_GREEN " ✔ Succès !" C_RESET "\n");
+      printf(C_GREEN " ✔ Succès ! (Connecté en tant que: '%s')" C_RESET "\n", current_username);
       sleep(1);
       return;
     } else if (strncmp(buffer, "SUCCES_INSCRIPTION", 18) == 0) {
@@ -112,6 +115,15 @@ void phase_authentification(int sock) {
       printf(C_RED " %s" C_RESET "\n", buffer);
     }
   }
+}
+
+/**
+ * @brief Removes newline characters from string.
+ */
+void trim_newline(char *str) {
+    char *pos;
+    if ((pos = strchr(str, '\n')) != NULL) *pos = '\0';
+    if ((pos = strchr(str, '\r')) != NULL) *pos = '\0';
 }
 
 /**
@@ -208,44 +220,60 @@ void phase_chat(int sock) {
         }
       }
       
-      buffer[n] = '\0';
-
-      char *line = strtok(buffer, "\n");
-      static int current_channel_id = 1;
-
-
-      while (line != NULL) {
-          if (strncmp(line, "JOIN_SUCCESS", 12) == 0) {
-              int cid = 0;
-              sscanf(line, "JOIN_SUCCESS %d", &cid);
-              current_channel_id = cid;
-              ui_print_channel_header(current_channel_id);
-          } else if (strncmp(line, "Retour au canal", 15) == 0) {
-              current_channel_id = 1;
-              ui_print_channel_header(current_channel_id);
-          } else if (strncmp(line, "HISTORY_END", 11) == 0) {
-              ui_print_channel_header(current_channel_id);
-          } else if (strncmp(line, "SUCCES_SESSION", 14) == 0) {
-              current_channel_id = 1;
-              ui_print_pretty_msg(line);
-          } else {
-              char *img_tag = strstr(line, "[IMG] ");
-              if (img_tag) {
-                  char *path = img_tag + 6;
-                  path[strcspn(path, "\r")] = 0;
-                  
-                  printf("\r\033[K"); 
-                  fflush(stdout);
-                  img_render_file(path, 80);
-                  ui_refresh_prompt();
-              } else {
-                  ui_print_pretty_msg(line);
-              }
-          }
-          
-          line = strtok(NULL, "\n");
-      }
-    }
+       buffer[n] = '\0';
+      
+       char *p = buffer;
+       char *next_line;
+       static int current_channel_id = 1;
+       
+       // On itère sur chaque ligne reçue dans le buffer
+       while ((next_line = strchr(p, '\n')) != NULL) {
+           *next_line = '\0'; // Termine la chaîne courante
+           
+           if (*p != '\0') { // Si la ligne n'est pas vide
+               char *line = p;
+               
+               if (strncmp(line, "JOIN_SUCCESS", 12) == 0) {
+                   int cid = 0;
+                   if (sscanf(line, "JOIN_SUCCESS %d", &cid) == 1) {
+                       current_channel_id = cid;
+                       ui_print_channel_header(current_channel_id);
+                   }
+               } else if (strncmp(line, "Retour au canal", 15) == 0) {
+                   current_channel_id = 1;
+                   ui_print_channel_header(current_channel_id);
+               } else if (strncmp(line, "HISTORY_END", 11) == 0) {
+                   ui_print_pretty_msg("--- Fin de l'historique ---\n");
+                   ui_refresh_prompt();
+               } else if (strncmp(line, "SUCCES_SESSION", 14) == 0) {
+                   current_channel_id = 1;
+                   ui_print_pretty_msg(line);
+               } else {
+                   char *img_tag = strstr(line, "[IMG] ");
+                   if (img_tag) {
+                       char *path = img_tag + 6;
+                       // Nettoyage fin de ligne potentiel (cr)
+                       path[strcspn(path, "\r")] = 0;
+                       
+                       printf("\r\033[K"); 
+                       fflush(stdout);
+                       img_render_file(path, 80);
+                       ui_refresh_prompt();
+                   } else {
+                       ui_print_pretty_msg(line);
+                   }
+               }
+           }
+           p = next_line + 1; // Avance au caractère après \n
+       }
+       
+       // Cas où le buffer ne finit pas par \n (fragment)
+       // Pour l'instant on l'affiche tel quel, mais idéalement il faudrait un buffer persistant.
+       // Vu que le serveur envoie \n à la fin de chaque message history, ça devrait aller.
+       if (*p != '\0') {
+           ui_print_pretty_msg(p);
+       }
+     }
 
     if (FD_ISSET(STDIN_FILENO, &sockets_actifs)) {
       char ch;
@@ -309,6 +337,8 @@ void phase_chat(int sock) {
               }
             } else if (strcmp(temp_msg, "/commandes") == 0) {
               ui_print_help();
+            } else if (strcmp(temp_msg, "/history") == 0) {
+              send(sock, "/history", 8, 0);
             } else if (strncmp(temp_msg, "/image ", 7) == 0) {
                char *path = temp_msg + 7;
                path[strcspn(path, "\n")] = 0;

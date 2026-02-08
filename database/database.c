@@ -294,12 +294,14 @@ int db_get_history(int channel_id, int limit,
   char query[512];
   int l = (limit > 0) ? limit : 50;
   snprintf(query, sizeof(query),
-           "SELECT u.username, m.content, m.timestamp "
-           "FROM message m "
-           "JOIN users u ON m.user_id = u.id "
-           "WHERE m.channel_id=%d "
-           "ORDER BY m.timestamp ASC "
-           "LIMIT %d;",
+           "SELECT COALESCE(sub.username, 'Inconnu'), sub.content, sub.timestamp FROM ("
+           "  SELECT u.username, m.content, m.timestamp "
+           "  FROM message m "
+           "  LEFT JOIN users u ON m.user_id = u.id "
+           "  WHERE m.channel_id=%d AND m.content NOT LIKE '[IMG]%%' "
+           "  ORDER BY m.timestamp DESC "
+           "  LIMIT %d"
+           ") AS sub ORDER BY sub.timestamp ASC;",
            channel_id, l);
 
   return db_query(query, callback, data);

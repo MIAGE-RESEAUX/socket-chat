@@ -176,7 +176,7 @@ int send_hist_cb(void *ctx, int argc, char **argv, char **col) {
     snprintf(hist_msg, sizeof(hist_msg), "[%s] [%s] %s\n", argv[2], argv[0], argv[1]);
     if (clients[index].socket > 0) {
       send(clients[index].socket, hist_msg, strlen(hist_msg), 0);
-      usleep(1000);
+      usleep(50000); // Délai augmenté significativement (50ms)
     }
   }
   return 0;
@@ -415,6 +415,11 @@ void traiter_donnees_client(int index) {
           }
         }
         send_to_client(sock, "------------------------------\n");
+      } else if (strcmp(cmd, "/history") == 0) {
+        int cid = clients[index].channel_id;
+        send_to_client(sock, "--- Historique ---\n");
+        db_get_history(cid, 50, send_hist_cb, &index);
+        send_to_client(sock, "HISTORY_END\n"); 
       } else {
         send_to_client(sock, "Commande inconnue.\n");
       }

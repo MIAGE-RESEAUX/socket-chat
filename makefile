@@ -66,8 +66,6 @@ initdb:
 # Nettoyage des fichiers compilés
 clean:
 	rm -f $(OBJ_SERVER) $(OBJ_CLIENT) $(SERVER_TARGET) $(CLIENT_TARGET) *.o
-	# Note : Les fichiers objets dans les sous-dossiers ne sont pas supprimés par *.o ici, 
-	# il faudrait ajouter rm -f **/*.o si nécessaire.
 
 # Réinitialisation complète de la Base de Données (ATTENTION : PERTE DE DONNÉES)
 db-reset:
