@@ -135,6 +135,19 @@ void phase_chat(int sock) {
                          "\n[%s] 📎 Fichier reçu: %s (%u octets)\n", username,
                          filename, file_size);
                 ui_print_pretty_msg(msg);
+
+                // Afficher l'image si c'est une image
+                if (strcmp(extension, ".png") == 0 ||
+                    strcmp(extension, ".jpg") == 0 ||
+                    strcmp(extension, ".jpeg") == 0) {
+                  char saved_path[512];
+                  snprintf(saved_path, sizeof(saved_path), "./medias/%s",
+                           filename);
+                  printf("\r\033[K");
+                  fflush(stdout);
+                  img_render_file(saved_path, 80);
+                }
+
                 ui_refresh_prompt();
               } else {
                 ui_print_pretty_msg("[Erreur] Échec sauvegarde\n");
@@ -235,6 +248,16 @@ void phase_chat(int sock) {
                            "[Moi] 📎 Fichier envoyé: %s (%u octets)\n",
                            filename, file_size);
                   ui_print_pretty_msg(msg);
+
+                  // Afficher l'image si c'est une image
+                  if (strcmp(extension, ".png") == 0 ||
+                      strcmp(extension, ".jpg") == 0 ||
+                      strcmp(extension, ".jpeg") == 0) {
+                    printf("\r\033[K");
+                    fflush(stdout);
+                    img_render_file(filepath, 80);
+                  }
+
                   ui_refresh_prompt();
                 } else {
                   ui_print_pretty_msg("[Erreur] Échec d'envoi\n");
