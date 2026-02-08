@@ -26,7 +26,7 @@ void ui_show_banner() {
          "\\______/   \\______||__|\\__\\ |_______|    |__|     \n");
   printf("\n" C_RESET);
   printf("                                      " C_ITALIC
-         "v2.0 - Canaux" C_RESET "\n\n");
+         "v3.0 - Final" C_RESET "\n\n");
 }
 
 void ui_set_raw_mode(int enable) {

@@ -38,7 +38,7 @@ void ui_print_channel_header(int channel_id) {
          "\\______/   \\______||__|\\__\\ |_______|    |__|     \n");
   printf("\n" C_RESET);
   printf("                                      " C_ITALIC
-         "v2.0 - Canaux" C_RESET "\n\n");
+         "v3.0 - Final" C_RESET "\n\n");
 
   // HEADER
   if (channel_id <= 1) {
