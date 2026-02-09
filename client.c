@@ -351,11 +351,7 @@ void phase_chat(int sock) {
                fflush(stdout);
                img_render_file(path, 80);
                ui_refresh_prompt();
-               
-               char send_buf[BUFFER_SIZE];
-               snprintf(send_buf, sizeof(send_buf), "[IMG] %s", path);
-               send(sock, send_buf, strlen(send_buf), 0);
-               
+
             } else if (strcmp(temp_msg, "/quit") == 0) {
               break;
             } else if (strcmp(temp_msg, "/leave") == 0) {
