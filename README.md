@@ -23,10 +23,29 @@
 Pour compiler et exécuter le projet, vous avez besoin de :
 - **GCC** (Compilateur C)
 - **Make** (Outil de build)
-- **MongoDB** et son driver : 
-    - MACOS : `brew install mongo-c-driver`
-    - Linux : `sudo apt install libmongoc-dev`
-- **SQLite3** (Base de données) et ses bibliothèques de développement (`libsqlite3-dev` sur Linux, inclus sur macOS).
+- **SQLite3** (Base de données) et ses bibliothèques de développement.
+
+### Installer SQLite3
+
+#### macOS (Homebrew)
+```bash
+brew update
+brew install sqlite
+```
+
+#### Linux
+
+##### Debian / Ubuntu
+```bash
+sudo apt update
+sudo apt install sqlite3 libsqlite3-dev
+```
+
+
+Vérifier l'installation :
+```bash
+sqlite3 --version
+```
 
 ### Compilation
 Un `Makefile` est fourni pour simplifier la compilation.
